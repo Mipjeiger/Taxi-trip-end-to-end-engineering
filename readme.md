@@ -21,7 +21,7 @@
     - plot heatmap for maps traffic
     ![alt text](images/D2DDAEA0-BFC3-4ED8-966E-C536FC196278.png)
     - prediction with features on the trip
-    ![alt text](02E9BFB2-8AF5-4708-A87B-DC5D1EAB08EC.png)
+    ![alt text](images/02E9BFB2-8AF5-4708-A87B-DC5D1EAB08EC.png)
 - Deploy to API -> Prediction result on API
     ![alt text](images/E427ECCA-417B-48E3-B76A-28FEEF4D43A5.png)
 - 

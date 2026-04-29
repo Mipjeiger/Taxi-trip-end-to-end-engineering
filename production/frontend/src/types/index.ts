@@ -38,3 +38,26 @@ export interface MapState {
     drop: Location | null;
     route: RoutePoint[];
 }
+
+export interface VehicleRecommendation {
+    recommendation_vehicle: string;
+    alternatives: [string, number][];
+    scores: Record<string, number>;
+}
+
+export interface SurgeRecommendation {
+    recommendation: 'book_now' | 'wait_5min' | 'wait_15min';
+    confidence: number;
+    current_surge: number;
+    estimated_surge_after_wait: number;
+    message: string;
+}
+
+export interface ChurnPromo {
+  send_promo: boolean;
+  promo_type?: string;
+  discount_percent?: number;
+  max_discount_idr?: number;
+  churn_probability: number;
+  expiry_hours?: number;
+}

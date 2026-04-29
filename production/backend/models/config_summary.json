@@ -1,0 +1,25 @@
+{
+  "saved_models": [
+    "best_model_ctat_ultra",
+    "best_model_vtat_ultra",
+    "models_ultra"
+  ],
+  "saved_neural_networks": [
+    "model_price_nn.keras",
+    "model_time_nn.keras"
+  ],
+  "saved_scalers": [
+    "scaler",
+    "scaler_ultra"
+  ],
+  "saved_encoders": [
+    "le_drop",
+    "le_pickup"
+  ],
+  "saved_features_count": {
+    "features": 26,
+    "features_enhanced": 0,
+    "features_ultra": 31
+  },
+  "models_directory": "/Users/miftahhadiyannoor/Documents/Gojek-Project/ml-engineer/models_new"
+}

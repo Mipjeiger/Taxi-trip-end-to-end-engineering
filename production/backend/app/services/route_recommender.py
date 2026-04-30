@@ -19,4 +19,6 @@ class RouteRecommender:
         if self.graph is None:
             df = self.data
             # logic to find best route based on dataframe source by historical column and user preferences
-            return 
+            return {
+                "route": 
+            }

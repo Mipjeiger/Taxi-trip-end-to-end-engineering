@@ -35,8 +35,8 @@ def map_row_to_response(row) -> RideResponse:
         drop_location=row['Drop Location'].strip(),
         vehicle_type=row['Vehicle Type'].strip(),
         price=float(row['Booking Value']),
-        estimated_pickup_time_minute=float(row['estimated_pickup_time_minute']),
-        estimated_drop_time_minute=float(row['estimated_drop_time_minute']),
+        estimated_pickup_time_min=float(row['estimated_pickup_time_minute']),
+        estimated_drop_time_min=float(row['estimated_drop_time_minute']),
         status=str(row['Booking Status']).strip(),
         created_at=pd.to_datetime(row['Datetime'])
 )

@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from app.config.config import DATABASE_PATH
+from core.config import DATABASE_PATH
 
 """Handles ride requests and history."""
 

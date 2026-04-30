@@ -8,7 +8,7 @@ export interface RideRequest {
     pickup_location: string;
     drop_location: string;
     vehicle_type: 'Car' | 'Bike' | 'Auto';
-    hour?: number;
+    booking_time?: number;
     day_of_week?: string;
 }
 

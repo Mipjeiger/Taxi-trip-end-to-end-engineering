@@ -2,7 +2,6 @@ import numpy as np
 import redis.asyncio as redis
 from core.config import DATABASE_PATH
 import pandas as pd
-from typing import Dict
 
 class VehicleRecommender:
     def __init__(self, redis_client: redis.Redis):
@@ -12,7 +11,7 @@ class VehicleRecommender:
     class VehicleType:
         vehicle_type: str
 
-    async def recommend_vehicle(self, user_id: str, context: Dict) -> Dict:
+    async def recommend_vehicle(self, user_id: str, context: dict) -> dict:
         """
         Recommend a vehicle type based on user context and historical data compatible to redis with DATABASE_PATH.
         In real scenario, fetch user embedding and compute similarity with vehicle embeddings."""

@@ -37,7 +37,7 @@ class ConnectionManager:
         if user_id in self.active_connections:
             del self.active_connections[user_id]
 
-    async def send_personal_message(self, message: dict, user_id: str):
+    async def send_personal_message(self, message: Dict, user_id: str):
         if user_id in self.active_connections:
             await self.active_connections[user_id].send_json(message)
 

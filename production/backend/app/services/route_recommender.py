@@ -105,3 +105,68 @@ class RouteRecommender:
             vehicle_type: Optional[str] = None
     ) -> Dict:
         preferences = user_preferences or {}
+        dt = pd.Timestamp(datetime_str)
+        ride_distance = self._haversine(lat1, lng1, lat2, lng2)
+
+        time_feat = self._derive_time_features(dt)
+        self._derive_distance_features(ride_distance)
+        historical = self._get_historical_context(pickup_encoded, drop_encoded, time_feat["hour"], time_feat["day_of_week"])
+
+        # Get edge data from graph
+        candidates = []
+        if self.graph.has_edge(pickup_encoded, drop_encoded):
+            edge = self.graph[pickup_encoded][drop_encoded]
+            candidates.append({"edge": edge, "score": self._score_route(edge, time_feat, preferences)})
+
+        for mid in self.graph.successors(pickup_encoded):
+            if self.graph.has_edge(mid, drop_encoded) and mid != drop_encoded:
+                e1, e2 = self.graph[pickup_encoded][mid], self.graph[mid][drop_encoded]
+                combined = {
+                    "avg_ctat": e1["avg_ctat"] + e2["avg_ctat"],
+                    "avg_price": e1["avg_price"] + e2["avg_price"],
+                    "avg_traffic": max(e1["avg_traffic"], e2["avg_traffic"]),
+                    "complexity": e1["complexity"] + e2["complexity"],
+                    "avg_distance": e1["avg_distance"] + e2["avg_distance"],
+                    "route_cluster": f"{e1['route_cluster']}-{e2['route_cluster']}",
+                    "via": mid,
+                }
+                candidates.append({"edge": combined, "score": self._score_route(combined, time_feat, preferences)})
+
+        candidates.sort(key=lambda x: x["score"])
+        best = candidates[0]["edge"] if candidates else {}
+
+        return {
+            "recommended_route": {
+                "pickup_encoded": pickup_encoded, "drop_encoded": drop_encoded,
+                "route_cluster": best.get("route_cluster"), "via": best.get("via"),
+                "score": candidates[0]["score"] if candidates else None,
+                "ride_distance_km": round(ride_distance, 3)
+            },
+            "estimates": {
+                "estimated_pickup_time_min": historical.get("estimated_pickup_time_minute"),
+                "estimated_drop_time_min":   historical.get("estimated_drop_time_minute"),
+                "avg_ctat": historical.get("route_ctat_mean"),
+                "avg_vtat": historical.get("route_vtat_mean"),
+                "price_per_km": historical.get("price_per_km"),
+                "avg_price": best.get("avg_price"),
+            },
+            "conditions": {
+                "traffic_score":    historical.get("traffic_score"),
+                "demand_pressure":  historical.get("demand_pressure"),
+                "hourly_demand":    historical.get("hourly_demand"),
+                "route_complexity": historical.get("route_complexity"),
+                "is_peak_hour":     bool(time_feat["is_peak_hour"]),
+                "is_night":         bool(time_feat["is_night"]),
+                "is_weekend":       bool(time_feat["is_weekend"]),
+            },
+            "quality": {
+                "driver_score": historical.get("driver_score"),
+                "avg_rating":   historical.get("avg_rating"),
+                "sample_count": historical.get("sample_count", 0),
+            },
+            "alternatives": [
+                {"route_cluster": c["edge"].get("route_cluster"), "via": c["edge"].get("via"),
+                 "score": c["score"], "avg_price": c["edge"].get("avg_price"), "avg_ctat": c["edge"].get("avg_ctat")}
+                for c in candidates[1:4]
+            ],
+        }

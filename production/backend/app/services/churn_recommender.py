@@ -1,10 +1,11 @@
 import numpy as np
+from typing import Dict
 
 class ChurnRecommender:
     def __init__(self, model_path=None):
         pass
 
-    async def recommend_promo(self, user_id: str, features: dict) -> dict:
+    async def recommend_promo(self, user_id: str, features: Dict) -> Dict:
         # Mock logic for churn prediction
         churn_prob = 0.1 if features.get("total_trips", 0) > 10 else 0.6
         if churn_prob > 0.5:

@@ -20,6 +20,5 @@ class RouteRecommender:
             df = self.data
             # logic to find best route based on dataframe source by historical column and user preferences
             return {
-                "route": "Mock Route",
-                "estimated_time": "30 mins",
+                "route": 
             }

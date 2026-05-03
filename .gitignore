@@ -5,3 +5,4 @@ workflow-automation.md
 **__pycache__/
 ml-engineer/MODEL_IMPROVEMENTS.md
 production/.env
+production/frontend/node_modules

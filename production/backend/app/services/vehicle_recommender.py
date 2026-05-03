@@ -1,6 +1,6 @@
 import numpy as np
 import redis.asyncio as redis
-from core.config import DATABASE_PATH
+from app.core.config import settings
 import pandas as pd
 
 class VehicleRecommender:
@@ -24,7 +24,7 @@ class VehicleRecommender:
             user_embedding = np.frombuffer(user_embedding, dtype=np.float32)
         
         # Simulate vehicle type by embedding to database path
-        df = pd.read_parquet(DATABASE_PATH)
+        df = pd.read_parquet(settings.DATABASE_URL)
         vehicle_typess = df['Vehicle Type'].unique()
         vehicle_embeddings = {vt: np.random.rand(128) for vt in vehicle_typess}
 

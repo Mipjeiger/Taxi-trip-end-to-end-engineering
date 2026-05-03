@@ -1,11 +1,11 @@
 import axios from 'axios';
-import { RideRequest, RidePrediction, VehicleRecommendation, SurgeRecommendation, ChurnPromo } from '../types';
+import { RideRequest, RidePrediction, VehicleRecommendation, SurgeRecommendation } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const apiClient = axios.create({
-    baseUrl: API_BASE_URL,
-    headers: { ' Content-Type': 'application/json' },
+    baseURL: API_BASE_URL,
+    headers: { 'Content-Type': 'application/json' },
 });
 
 export const api = {
@@ -16,32 +16,28 @@ export const api = {
     },
 
     // Vehicle recommendation
-    recommendVehicle: async (userID: string, context: any): Promise<RidePrediction> => {
-        const response = await apiClient.post('/api/recommend/vehicle', { userID, context });
+    recommendVehicle: async (userId: string, context: any): Promise<RidePrediction> => {
+        const response = await apiClient.post('/api/recommend/vehicle', { userId, context });
         return response.data;
     },
 
     // Surge recommendation
     getSurgeRecommendation: async (location: string, currentSurge: number): Promise<SurgeRecommendation> => {
-        const response = await apiClient.post(`/api/recommend/surge/${location}?current_surge=${currentSurge}`);
+        const response = await apiClient.get(`/api/recommend/surge/${location}`, {
+            params: { current_surge: currentSurge }
+        });
         return response.data;
     },
 
-    // Churn promo recommendation
-    getChurnPromo: async (userIDL string, features: any): Promise<ChurnPromo> => {
-        const response = await apiClient.post(`/api/recommend/churn_promo/${userID}`, features);
-        return response.data;
-    },
-
-    // Driver matching (simulated)
-    requestRide: async (rideRequestL any) => {
+    // Request ride
+    requestRide: async (rideRequest: any) => {
         const response = await apiClient.post('/api/ride/request', rideRequest);
         return response.data;
     },
 
     // Ride history
-    getRideHistory: async (userID: string) => {
-        const response = await apiClient.get(`/api/rides/history/${userID}`);
+    getRideHistory: async (userId: string) => {
+        const response = await apiClient.get(`/api/rides/history/${userId}`);
         return response.data;
     }
 };

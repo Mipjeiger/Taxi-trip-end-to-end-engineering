@@ -35,4 +35,5 @@ async def compute_psi(model_name: str) -> float:
     expected = np.histogram(predictions, bins=bins)[0] / len(predictions)
     actual = np.histogram(actuals, bins=bins)[0] / len(actuals)
     psi = np.sum((actual - expected) * np.log((actual + 1e-6) / (expected + 1e-6)))
+    
     return float(psi)

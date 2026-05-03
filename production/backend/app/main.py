@@ -1,7 +1,9 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import logging
+import time
 from typing import Dict
 
 from app.api.routes import prediction, ride, driver, analytics, recommendations
@@ -14,17 +16,45 @@ from app.services.churn_recommender import ChurnRecommender
 from app.services.matching_recommender import MatchingRecommender
 from app.core.redis_client import get_redis
 
-# Create logging configuration
+# Prometheus metrics
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global reference for services
+# Global service references
 ml_predictor = None
 vehicle_recommender = None
 surge_recommender = None
 churn_recommender = None
 matching_recommender = None
 
-# Websocket connection manager
+# Prometheus metrics
+REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
+REQUEST_LATENCY = Histogram('http_request_duration_seconds', 'HTTP request latency', ['method', 'endpoint'])
+ACTIVE_RIDES = Gauge('active_rides', 'Number of active rides')
+PREDICTION_TIME = Histogram('prediction_time_seconds', 'Time to run a prediction')
+
+# Middleware to collect metrics
+class MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        start_time = time.time()
+        response = await call_next(request)
+        latency = time.time() - start_time
+        REQUEST_COUNT.labels(
+            method=request.method,
+            endpoint=request.url.path,
+            status=response.status_code
+        ).inc()
+        REQUEST_LATENCY.labels(
+            method=request.method,
+            endpoint=request.url.path
+        ).observe(latency)
+        return response
+
+# WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -41,32 +71,35 @@ class ConnectionManager:
         if user_id in self.active_connections:
             await self.active_connections[user_id].send_json(message)
 
-
-# usage of async context manager to initialize services and database
 manager = ConnectionManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global ml_predictor, vehicle_recommender, surge_recommender, churn_recommender, matching_recommender
     logger.info("Initializing database and services...")
+    
+    # Load ML models
     ml_predictor = MLPredictor()
-    await ml_predictor.load_model()
-
-    # Initialize services that depend on the ML predictor
+    await ml_predictor.load_models()   # note: method is load_models, not load_model
+    
+    # Initialize Redis client
     redis_client = await get_redis()
     vehicle_recommender = VehicleRecommender(redis_client)
     surge_recommender = SurgeRecommender(redis_client)
     churn_recommender = ChurnRecommender()
     matching_recommender = MatchingRecommender(redis_client)
-
+    
+    # Initialize database tables
     await init_db()
+    
     logger.info("Initialization complete.")
-    yield # Finish initialization before handling requests
+    yield
     logger.info("Shutting down services...")
 
-# Create FastAPI app with lifespan for initialization
-app = FastAPI(title="Taxi trip API", lifespan=lifespan)
+# Create FastAPI app
+app = FastAPI(title="Taxi Trip API", lifespan=lifespan)
 
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -75,6 +108,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add Prometheus metrics middleware
+app.add_middleware(MetricsMiddleware)
+
 # Include routers
 app.include_router(prediction.router, prefix="/api/predict", tags=["predictions"])
 app.include_router(ride.router, prefix="/api/rides", tags=["rides"])
@@ -82,24 +118,27 @@ app.include_router(driver.router, prefix="/api/drivers", tags=["drivers"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(recommendations.router, prefix="/api/recommend", tags=["recommendations"])
 
-# Websocket endpoint for real-time connections
+# Prometheus metrics endpoint
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+# Health check
 @app.get("/health")
 async def health():
-    return {"status": "ok", "ml_loader": ml_predictor is not None}
+    return {"status": "ok", "ml_loaded": ml_predictor is not None}
 
+# WebSocket endpoint
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.connect(user_id, websocket)
     try:
         while True:
             data = await websocket.receive_json()
-            # Broadcast driver location to relevant riders
             if data.get("type") == "driver_location":
-                # Update driver position in redis
                 redis = await get_redis()
                 await redis.set(f"driver:loc:{user_id}", f"{data['lat']},{data['lng']}", ex=15)
-
-                # Notify nearby riders
+                # Notify nearby riders (simplified – all riders)
                 for conn_id, conn in manager.active_connections.items():
                     if conn_id.startswith("rider_"):
                         await manager.send_personal_message({
@@ -109,7 +148,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                             "lng": data["lng"]
                         }, conn_id)
             elif data.get("type") == "ride_status":
-                # Forward to specific driver/rider
                 rider_id = data.get("rider_id")
                 if rider_id:
                     await manager.send_personal_message({
@@ -117,6 +155,5 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                         "status": data['status'],
                         "ride_id": data['ride_id']
                     }, rider_id)
-
     except WebSocketDisconnect:
         manager.disconnect(user_id)

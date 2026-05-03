@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'taxi_trip_backend'
+    static_configs:
+      - targets: ['backend:8000'] # Inside docker network, use service name and port
+    metrics_path: '/metrics' # Ensure this matches the endpoint exposed by your backend

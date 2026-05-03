@@ -12,7 +12,7 @@ router = APIRouter()
 class RideRequest(BaseModel):
     pickup_location: str
     drop_location: str
-    vehicle_type: str = Field("Car", regex="^(Car|Bike|Auto)$")
+    vehicle_type: str = Field("Car", pattern="^(Car|Bike|Auto)$")
     hour: Optional[int] = None
     day_of_week: Optional[int] = None
 

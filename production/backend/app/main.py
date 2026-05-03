@@ -17,7 +17,8 @@ from app.services.matching_recommender import MatchingRecommender
 from app.core.redis_client import get_redis
 
 # Prometheus metrics
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 
 # Configure logging
@@ -30,12 +31,6 @@ vehicle_recommender = None
 surge_recommender = None
 churn_recommender = None
 matching_recommender = None
-
-# Prometheus metrics
-REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
-REQUEST_LATENCY = Histogram('http_request_duration_seconds', 'HTTP request latency', ['method', 'endpoint'])
-ACTIVE_RIDES = Gauge('active_rides', 'Number of active rides')
-PREDICTION_TIME = Histogram('prediction_time_seconds', 'Time to run a prediction')
 
 # Middleware to collect metrics
 class MetricsMiddleware(BaseHTTPMiddleware):

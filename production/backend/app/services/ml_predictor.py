@@ -6,8 +6,6 @@ from pathlib import Path
 from tensorflow.keras.models import load_model
 import logging
 
-from app.api.routes.metrics import PREDICTION_TIME   # import prometheus histogram (create if missing)
-
 logger = logging.getLogger(__name__)
 
 class MLPredictor:
@@ -54,37 +52,36 @@ class MLPredictor:
     async def predict_ride_metrics(self, pickup: str, drop: str, vehicle_type: str,
                                    hour: int, day_of_week: int, distance_km: float) -> Dict:
         """Predict ride metrics using ML models and return formatted result."""
-        with PREDICTION_TIME.time():   # measure prediction latency
-            # Extract feature vector
-            features = await self._extract_features(pickup, drop, vehicle_type, hour, day_of_week, distance_km)
-            features_scaled = self.scalers['ultra'].transform(features)
+        # Extract feature vector
+        features = await self._extract_features(pickup, drop, vehicle_type, hour, day_of_week, distance_km)
+        features_scaled = self.scalers['ultra'].transform(features)
 
-            # Predict CTAT (customer time to destination) and VTAT (vehicle time to pickup)
-            ctat_pred = float(self.models['ctat'].predict(features_scaled)[0])
-            vtat_pred = float(self.models['vtat'].predict(features_scaled)[0])
+        # Predict CTAT (customer time to destination) and VTAT (vehicle time to pickup)
+        ctat_pred = float(self.models['ctat'].predict(features_scaled)[0])
+        vtat_pred = float(self.models['vtat'].predict(features_scaled)[0])
 
-            total_time = ctat_pred + vtat_pred
-            # Use provided distance_km (should come from maps API)
-            distance = distance_km
+        total_time = ctat_pred + vtat_pred
+        # Use provided distance_km (should come from maps API)
+        distance = distance_km
 
-            # Predict price (option 1: using neural network)
-            # price_pred = float(self.models['price'].predict(features_scaled)[0][0])
-            # Option 2: use heuristic formula (as fallback)
-            price = await self._calculate_price(distance, total_time, 
-                                                features['is_peak_hour'].iloc[0] if 'is_peak_hour' in features else 0)
+        # Predict price (option 1: using neural network)
+        # price_pred = float(self.models['price'].predict(features_scaled)[0][0])
+        # Option 2: use heuristic formula (as fallback)
+        price = await self._calculate_price(distance, total_time, 
+                                            features['is_peak_hour'].iloc[0] if 'is_peak_hour' in features else 0)
 
-            return {
-                'pickup_location': pickup,
-                'drop_location': drop,
-                'distance_km': round(distance, 2),
-                'estimated_time_min': round(total_time, 2),
-                'vtat_min': round(vtat_pred, 2),
-                'ctat_min': round(ctat_pred, 2),
-                'estimated_price_idr': round(price, 2),
-                'average_speed_kmh': round(distance / (total_time / 60), 2) if total_time > 0 else 0,
-                'price_per_km': round(price / distance, 2) if distance > 0 else 0,
-                'vehicle_type': vehicle_type,
-            }
+        return {
+            'pickup_location': pickup,
+            'drop_location': drop,
+            'distance_km': round(distance, 2),
+            'estimated_time_min': round(total_time, 2),
+            'vtat_min': round(vtat_pred, 2),
+            'ctat_min': round(ctat_pred, 2),
+            'estimated_price_idr': round(price, 2),
+            'average_speed_kmh': round(distance / (total_time / 60), 2) if total_time > 0 else 0,
+            'price_per_km': round(price / distance, 2) if distance > 0 else 0,
+            'vehicle_type': vehicle_type,
+        }
 
     async def _extract_features(self, pickup: str, drop: str, vehicle_type: str,
                                 hour: int, day_of_week: int, distance_km: float) -> pd.DataFrame:

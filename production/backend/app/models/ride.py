@@ -16,6 +16,10 @@ class Ride(Base):
     estimated_time_min = Column(Float, nullable=False)
     status = Column(String, default='pending')
     created_at = Column(DateTime, default=datetime.now)
+    completed_at = Column(DateTime, nullable=True)
 
     def to_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+    
+    def __repr__(self):
+        return f"<Ride {self.id} from {self.pickup_location} to {self.drop_location}>"

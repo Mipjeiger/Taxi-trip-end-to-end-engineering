@@ -1,0 +1,51 @@
+# Frontend (if not needed in backend image)
+frontend/
+node_modules/
+
+# Backend models (mount as volume instead)
+backend/models/*.pkl
+backend/models/*.keras
+backend/models/*.h5
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Data
+*.db
+*.sqlite
+data/
+*.csv
+*.parquet
+
+# Logs
+logs/
+*.log
+
+# Documentation
+README.md
+docs/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -25,6 +25,6 @@
     - API Testing to ensure prediction is reliable
     ![alt text](images/E427ECCA-417B-48E3-B76A-28FEEF4D43A5.png)
 
+- Build Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
+    - Docker containeraize dependencies system to run in wraps
 - Build UI Taxi apps for user (Production Grade)
-- Build Engineering system focused on AI/ML, Data Engineering to settle on the production
-- Build feature recommendation engineering

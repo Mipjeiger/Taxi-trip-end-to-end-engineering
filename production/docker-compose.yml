@@ -84,12 +84,12 @@ services:
     container_name: taxi_trip_grafana
     ports:
       - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD: admin
-      - GF_INSTALL_PLUGINS: grafana-piechart-panel
     depends_on:
       - prometheus
     networks:

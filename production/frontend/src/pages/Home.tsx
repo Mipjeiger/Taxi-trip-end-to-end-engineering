@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '../components/UI/Button';
 import { RouteMap } from '../components/Map/RouteMap';
 
@@ -8,8 +9,8 @@ export const Home: React.FC = () => {
     <div style={styles.container}>
       {/* Header */}
       <div style={styles.header}>
-        <h1 style={styles.title}>🚗 Gojek</h1>
-        <p style={styles.subtitle}>ML-Powered Ride Sharing Platform</p>
+        <h1 style={styles.title}>🚗 Taxi Trip</h1>
+        <p style={styles.subtitle}>Powered Ride Sharing Platform</p>
       </div>
 
       {/* Main Content */}

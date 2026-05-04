@@ -63,16 +63,16 @@ export const AnalyticsHub: React.FC = () => {
       </div>
 
       {/* Active Tab Content */}
-      {currentAnalytic && (
+      {currentAnalytics && (
         <div className="analytics-container">
           <div className="analytics-info">
-            <h2>{currentAnalytic.icon} {currentAnalytic.title}</h2>
-            <p>{currentAnalytic.description}</p>
+            <h2>{currentAnalytics.icon} {currentAnalytics.title}</h2>
+            <p>{currentAnalytics.description}</p>
           </div>
           
           <iframe
-            src={currentAnalytic.path}
-            title={currentAnalytic.title}
+            src={currentAnalytics.path}
+            title={currentAnalytics.title}
             className="analytics-iframe"
           />
         </div>

@@ -15,6 +15,7 @@ from app.services.surge_recommender import SurgeRecommender
 from app.services.churn_recommender import ChurnRecommender
 from app.services.matching_recommender import MatchingRecommender
 from app.core.redis_client import get_redis
+from app.api.routes import llm
 
 # Prometheus metrics
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY
@@ -112,6 +113,7 @@ app.include_router(ride.router, prefix="/api/rides", tags=["rides"])
 app.include_router(driver.router, prefix="/api/drivers", tags=["drivers"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(recommendations.router, prefix="/api/recommend", tags=["recommendations"])
+app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 
 # Prometheus metrics endpoint
 @app.get("/metrics")

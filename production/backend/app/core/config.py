@@ -33,8 +33,10 @@ class Settings(BaseSettings):
 
     # LLM Configuration
     GROQ_API_KEY: Optional[str] = None
-    LLM_PROVIDER: str = "groq"
-    LLM_MODEL: str = "llama-3.1-8b-instant"
+    GEMINI_API_KEY: Optional[str] = None
+    LLM_PROVIDER: str = "groq"  # Options: "groq", "gemini", "local"
+    LLM_MODEL_GROQ: str = "llama-3.1-8b-instant"
+    LLM_MODEL_GEMINI: str = "gemini-2.5-pro"
     LLM_BASE_URL: Optional[str] = None 
 
     @property

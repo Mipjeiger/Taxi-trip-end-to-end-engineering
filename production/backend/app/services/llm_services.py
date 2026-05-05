@@ -11,7 +11,8 @@ class LLMService:
     """LLM service for chatbot, route recommendation, and natural language booking services."""
 
     def __init__(self):
-        self.provider = settings.LLM_PROVIDER
+        self.provider_groq = settings.LLM_PROVIDER_GROQ
+        self.provider_gemini = settings.LLM_PROVIDER_GEMINI
         self.groq_api_key = settings.GROQ_API_KEY
         self.gemini_api_key = settings.GEMINI_API_KEY
         self.model_groq = settings.LLM_MODEL_GROQ
@@ -20,9 +21,9 @@ class LLMService:
 
     async def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
         """Generic chat method to interact with the LLM."""
-        if self.provider == "groq":
+        if self.provider_groq == "groq":
             return await self._groq_chat(messages, temperature)
-        elif self.provider == "gemini":
+        elif self.provider_gemini == "gemini":
             return await self._gemini_chat(messages, temperature)
         else:
             return await self._local_chat(messages, temperature)

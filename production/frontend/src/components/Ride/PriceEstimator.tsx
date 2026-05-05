@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { RideRequest, RidePrediction } from '../../types';
 import { api } from '../../services/api';
-import LoadingSpinner from '../UI/LoadingSpinner';
+import { LoadingSpinner } from '../UI/LoadingSpinner';
 
 interface PriceEstimatorProps {
     pickup: string;

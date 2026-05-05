@@ -28,9 +28,9 @@ const MapView: React.FC<MapViewProps> = ({
     useEffect(() => {
         if (!mapContainer.current) return;
 
-        mapboxgl.accessToken = ProcessingInstruction.env.REACT_APP_MAPBOX_TOKEN || '';
+        mapboxgl.accessToken = process.env.REACT_APP_MAPBOX_TOKEN || '';
 
-        map.current = new.mapboxgl.Map({
+        map.current = new mapboxgl.Map({
             container: mapContainer.current,
             style: 'mapbox://styles/mapbox/streets-v11',
             center: [center.lng, center.lat],
@@ -62,7 +62,7 @@ const MapView: React.FC<MapViewProps> = ({
             const marker = new mapboxgl.Marker({ color: '#00C853' })
                 .setLngLat([pickup.lng, pickup.lat])
                 .setPopup(new mapboxgl.Popup().setHTML('<h3>Pickup Location</h3>'))
-                .addTo(map.current!);
+                .addTo(map.current);
             markers.current.push(marker);
         }
 
@@ -71,7 +71,7 @@ const MapView: React.FC<MapViewProps> = ({
             const marker = new mapboxgl.Marker({ color: '#FF1744' })
                 .setLngLat([drop.lng, drop.lat])
                 .setPopup(new mapboxgl.Popup().setHTML('<h3>Drop Location</h3>'))
-                .addTo(map.current!);
+                .addTo(map.current);
             markers.current.push(marker);
         }
 
@@ -87,7 +87,7 @@ const MapView: React.FC<MapViewProps> = ({
                 }
             });
         }
-}, [pickup, drop, route]);
+    }, [pickup, drop, route]);
 
     return (
     <div className="relative w-full h-full">

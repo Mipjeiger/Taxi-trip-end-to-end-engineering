@@ -5,8 +5,13 @@ class WebSocketService {
     private maxReconnectAttempts = 5;
     private reconnectDelay = 3000;
 
-    constructor(url: string = process.env.REACT_APP_WS_URL || 'ws://localhost:8000') {
-        this.url = url;
+    constructor() {
+        // fallback logic to .env ( no hardcoded URL )
+        const envUrl = process.env.REACT_APP_WS_URL;
+        if (!envUrl) {
+            throw new Error("WebSocket URL is not defined in environment variables");
+        }
+        this.url = envUrl;
     }
 
     connect(): Promise<void> {

@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     # Optional: support for async
     USE_ASYNC_PG: bool = True
 
+    # LLM Configuration
+    GROQ_API_KEY: Optional[str] = None
+    LLM_PROVIDER: str = "groq"
+    LLM_MODEL: str = "llama-3.1-8b-instant"
+    LLM_BASE_URL: Optional[str] = None 
+
     @property
     def DATABASE_URL(self) -> str:
         if self.USE_ASYNC_PG:

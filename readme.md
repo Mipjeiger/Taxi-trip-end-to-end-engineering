@@ -32,5 +32,8 @@
 - Build UI Taxi apps for user (Production Grade)
     - UI display in mobile apps
     ![alt text](images/BD152BC8-72EB-418E-9885-93F5B751B062.png)
+    - Location stats drop and pickup location
+    ![alt text](images/49C7B5F4-1023-45C8-B401-2B6189E1110B.png)
+    ------------------------------------------------------------
     - UI display in website
     ![alt text](images/9516A71F-E76B-46E2-9BCD-BCA96B46CE96.png)

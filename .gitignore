@@ -6,3 +6,4 @@ workflow-automation.md
 ml-engineer/MODEL_IMPROVEMENTS.md
 production/.env
 production/frontend/node_modules
+production/backend/notes.md

@@ -13,6 +13,19 @@
 - Get models to predict and embed
     - Machine learning models (Supervised learning ML models)
     - Deep learning models (Neural Network models)
+
+## 🤖 Taxi Trip Project Construction Engine System
+- Services are constructed reliable for engineering system as here as
+    - Core ML
+        • Feature engineering for data preprocessing to clear data missing
+    - Business Logic
+        • Ensure business logic toward to advantage cost management
+    - Matching / Routing engine system
+        • Route engine recommendation to answer the best road way trip chosen
+    - Experimentation
+        • A/B Testing inferences in otherway
+    - Monitoring
+        • Monitor models are using on production
 - Build Google Maps in a notebook cell Google maps display enterprise for taxi trip distance
     - Interactive map generated with 10 routes
     ![alt text](images/FE8C72D8-FB62-4205-8568-D82EA975BF00.png)

@@ -11,20 +11,15 @@ class LLMService:
     """LLM service for chatbot, route recommendation, and natural language booking services."""
 
     def __init__(self):
-        self.provider_groq = settings.LLM_PROVIDER_GROQ
-        self.provider_gemini = settings.LLM_PROVIDER_GEMINI
+        self.provider = settings.LLM_PROVIDER
         self.groq_api_key = settings.GROQ_API_KEY
-        self.gemini_api_key = settings.GEMINI_API_KEY
-        self.model_groq = settings.LLM_MODEL_GROQ
-        self.model_gemini = settings.LLM_MODEL_GEMINI
+        self.model = settings.LLM_MODEL
         self.base_url = settings.LLM_BASE_URL or "https://api.groq.com/openai/v1"
 
     async def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
         """Generic chat method to interact with the LLM."""
-        if self.provider_groq == "groq":
+        if self.provider == "groq":
             return await self._groq_chat(messages, temperature)
-        elif self.provider_gemini == "gemini":
-            return await self._gemini_chat(messages, temperature)
         else:
             return await self._local_chat(messages, temperature)
         
@@ -34,7 +29,7 @@ class LLMService:
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization":f"Bearer {self.groq_api_key}"},
                 json={
-                    "model": self.model_groq,
+                    "model": self.model,
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": 600,
@@ -42,16 +37,6 @@ class LLMService:
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
-        
-        async def _gemini_chat(self, messages: List[Dict[str, str]], temperature: float) -> str:
-            import google.generativeai as genai
-            genai.configure(api_key=self.gemini_api_key)
-            model = genai.GenerativeModel(self.model_gemini)
-            
-            # Convert messages to Gemini format
-            prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
-            response = model.generate_content(prompt, generation_config={"temperature": temperature, "max_tokens": 600})
-            return response.text
         
         async def _local_chat(self, messages: List[Dict[str, str]], temperature: float) -> str:
             return "Local LLM not implemented yet."

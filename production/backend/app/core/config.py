@@ -18,13 +18,13 @@ ENV_PATH = next((path for path in ENV_PATHS if path.exists()), None)
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Taxi Trip Engineering API Integration"
     DEBUG: bool = False
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:4002"]
     REDIS_URL: str = "redis://localhost:6379"
 
     # Match to .env postgresql
     DB_USER: str
     DB_PASSWORD: str
-    DB_HOST: str = "localhost"
+    DB_HOST: str = "postgres" # Ensure service name matches with docker
     DB_PORT: int = 5432
     DB_NAME: str
 
@@ -34,22 +34,20 @@ class Settings(BaseSettings):
     # LLM Configuration
     GROQ_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
-    LLM_PROVIDER_GROQ: str = "groq" 
-    LLM_PROVIDER_GEMINI: str = "gemini"
-    LLM_MODEL_GROQ: str = "llama-3.1-8b-instant"
-    LLM_MODEL_GEMINI: str = "gemini-2.5-pro"
+    LLM_PROVIDER: str = "groq" 
+    LLM_MODEL: str = "llama-3.1-8b-instant"
     LLM_BASE_URL: Optional[str] = None 
 
     @property
     def DATABASE_URL(self) -> str:
         if self.USE_ASYNC_PG:
-            return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+            return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}" # Use asyncpg for async
+        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}" # Use psycopg2 for sync
         
     @property
     def DATABASE_URL_SYNC(self) -> str:
-        """Synchronous database URL (for alembic, scripts)"""
-        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        # Always include the driver +psycopg2
+        return f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     class Config:
         if ENV_PATH:
@@ -66,4 +64,4 @@ class Settings(BaseSettings):
 
 settings = Settings() # Singleton instance
 
-DATABASE_PATH = settings.DATABASE_URL # For backward compatibility
+DB_CONNECTION_STRING = settings.DATABASE_URL # For backward compatibility

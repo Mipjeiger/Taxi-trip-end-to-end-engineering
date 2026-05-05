@@ -89,7 +89,7 @@ export const RideBooking: React.FC = () => {
                   {rides.map(ride => (
                     <RideCard
                       key={ride.id}
-                      ride={ride}
+                      ride={ride as any}
                       onSelect={() => console.log('Selected:', ride)}
                     />
                   ))}
@@ -108,7 +108,7 @@ export const RideBooking: React.FC = () => {
             <div className="bg-white rounded-xl shadow-md p-6 sticky top-6">
               <h3 className="font-semibold text-lg mb-3">Quick Tips</h3>
               <ul className="space-y-2 text-sm text-gray-600">
-                <li>✨ Try our AI route recommendation above</li>
+                <li>✨ Try our AI recommendation to find the best route</li>
                 <li>💬 Ask the chatbot for travel tips</li>
                 <li>🚗 Compare prices across different ride types</li>
                 <li>⭐ Share your ride code with friends</li>
@@ -121,7 +121,7 @@ export const RideBooking: React.FC = () => {
       {/* Floating Chat Button */}
       <button
         onClick={() => setIsChatOpen(true)}
-        className="fixed bottom-6 right-6 bg-green-500 text-white p-4 rounded-full shadow-lg hover:bg-green-600 transition-all duration-200 z-40 hover:scale-110"
+        className="fixed bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 transition-all duration-200 z-40 hover:scale-110"
       >
         <MessageCircle size={24} />
       </button>

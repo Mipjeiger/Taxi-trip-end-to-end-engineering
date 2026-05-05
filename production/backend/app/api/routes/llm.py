@@ -10,7 +10,7 @@ from app.services.ml_predictor import MLPredictor
 router = APIRouter()
 
 class ChatRequest(BaseModel):
-    messages = List[Dict[str, str]]  # List of {"role": "user"/"assistant", "content": "message content"}
+    messages: List[Dict[str, str]]  # List of {"role": "user"/"assistant", "content": "message content"}
     temperature: float = 0.7
 
 class RouteRecommendRequest(BaseModel):

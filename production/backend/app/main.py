@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Dict
 
-from app.api.routes import prediction, ride, driver, analytics, recommendations
+from app.api.routes import prediction, ride, driver, analytics, recommendations, llm
 from app.core.config import settings
 from app.core.database import init_db
 from app.services.ml_predictor import MLPredictor
@@ -15,7 +15,6 @@ from app.services.surge_recommender import SurgeRecommender
 from app.services.churn_recommender import ChurnRecommender
 from app.services.matching_recommender import MatchingRecommender
 from app.core.redis_client import get_redis
-from app.api.routes import llm
 
 # Prometheus metrics
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY

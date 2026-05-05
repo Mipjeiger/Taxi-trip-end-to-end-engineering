@@ -27,5 +27,10 @@
 
 - Build Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
     - Docker containeraize dependencies system to run in wraps
+    ![alt text](images/CF98753F-E37E-4052-9861-FE9AAD0D6F40.png)
     
 - Build UI Taxi apps for user (Production Grade)
+    - UI display in mobile apps
+    ![alt text](images/BD152BC8-72EB-418E-9885-93F5B751B062.png)
+    - UI display in website
+    ![alt text](images/9516A71F-E76B-46E2-9BCD-BCA96B46CE96.png)

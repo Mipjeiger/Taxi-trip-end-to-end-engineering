@@ -1,47 +1,64 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { api } from '../services/api';
 
+interface Ride {
+  id: string;
+  pickup_location: string;
+  drop_location: string;
+  vehicle_type: string;
+  price: number;
+  estimated_time_min: number;
+  status: string;
+}
+
 interface RideRequest {
-    userId: string;
-    pickupLat: number;
-    pickupLng: number;
-    dropoffLat: number;
-    dropoffLng: number;
+  userId: string;
+  pickupLat: number;
+  pickupLng: number;
+  dropoffLat: number;
+  dropoffLng: number;
 }
 
 export const useRide = () => {
-    const [rides, setRides] = useState<any[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+  const [rides, setRides] = useState<Ride[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-    const requestRide = useCallback(async (rideRequest: RideRequest) => {
-        setLoading(true);
-        setError(null);
-        try {
-            const response = await api.requestRide(request);
-            setRides(prev => [...prev, response]);
-            return response;
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to request ride');
+  const requestRide = async (params: RideRequest) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await api.requestRide(params);
+      // Add the new ride to the list
+      setRides(prev => [response, ...prev]);
+      return response;
+    } catch (err: any) {
+      setError(err.message);
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  const getRideHistory = useCallback(async (userId: string) => {
+  const fetchRideHistory = async (userId: string) => {
     setLoading(true);
     try {
-      const response = await api.getRideHistory(userId);
-      setRides(response);
-      return response;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch history');
+      const history = await api.getRideHistory(userId);
+      setRides(history);
+      return history;
+    } catch (err: any) {
+      setError(err.message);
       throw err;
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  return { rides, loading, error, requestRide, getRideHistory };
+  return {
+    rides,
+    loading,
+    error,
+    requestRide,
+    fetchRideHistory,
+  };
 };

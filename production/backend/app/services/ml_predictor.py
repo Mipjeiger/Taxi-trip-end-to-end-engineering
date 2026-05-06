@@ -59,8 +59,8 @@ class MLPredictor:
         # Predict CTAT (customer time to destination) and VTAT (vehicle time to pickup)
         ctat_pred = float(self.models['ctat'].predict(features_scaled)[0])
         vtat_pred = float(self.models['vtat'].predict(features_scaled)[0])
-
         total_time = ctat_pred + vtat_pred
+
         # Use provided distance_km (should come from maps API)
         distance = distance_km
 
@@ -74,7 +74,8 @@ class MLPredictor:
             'pickup_location': pickup,
             'drop_location': drop,
             'distance_km': round(distance, 2),
-            'estimated_time_min': round(total_time, 2),
+            'estimated_pickup_time_minute': round(total_time, 2),
+            'estimated_drop_time_minute': round(cta,
             'vtat_min': round(vtat_pred, 2),
             'ctat_min': round(ctat_pred, 2),
             'estimated_price_idr': round(price, 2),

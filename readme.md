@@ -41,6 +41,12 @@
 - Build Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
     - Docker containeraize dependencies system to run in wraps
     ![alt text](images/CF98753F-E37E-4052-9861-FE9AAD0D6F40.png)
+    - Create Database on PostgreSQL by occuring with docker
+    ![alt text](images/1B2D32D4-C853-4CB5-B274-4CEC66A1C106.png)
+    - API integration based on database postgresql connection
+        - Driver tracking for ride history
+        ![alt text](images/261D920B-A831-4C0D-9444-951490A0C8B6.png)
+        - 
     
 - Build UI Taxi apps for user (Production Grade)
     - UI display in mobile apps

@@ -73,23 +73,28 @@ async def lifespan(app: FastAPI):
     global ml_predictor, vehicle_recommender, surge_recommender, churn_recommender, matching_recommender
     logger.info("Initializing database and services...")
     
-    # Load ML models
-    ml_predictor = MLPredictor()
-    await ml_predictor.load_models()   # note: method is load_models, not load_model
+    try:
+        # Initialize database to ensure connectivity
+        await init_db()
+        logger.info("Database initialized successfully.")
+
+        # Load ML models
+        ml_predictor = MLPredictor()
+        await ml_predictor.load_models()   # note: method is load_models, not load_model
+        
+        # Initialize Redis client
+        redis_client = await get_redis()
+        vehicle_recommender = VehicleRecommender(redis_client)
+        surge_recommender = SurgeRecommender(redis_client)
+        churn_recommender = ChurnRecommender()
+        matching_recommender = MatchingRecommender(redis_client)
+         
+        logger.info("Initialization complete.")
+    except Exception as e:
+        logger.error(f"Initialization failed: {e}")
+        raise e
     
-    # Initialize Redis client
-    redis_client = await get_redis()
-    vehicle_recommender = VehicleRecommender(redis_client)
-    surge_recommender = SurgeRecommender(redis_client)
-    churn_recommender = ChurnRecommender()
-    matching_recommender = MatchingRecommender(redis_client)
-    
-    # Initialize database tables
-    await init_db()
-    
-    logger.info("Initialization complete.")
     yield
-    logger.info("Shutting down services...")
 
 # Create FastAPI app
 app = FastAPI(title="Taxi Trip API", lifespan=lifespan)

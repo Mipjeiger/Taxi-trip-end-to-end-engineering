@@ -8,12 +8,13 @@ pydantic==2.4.2
 pydantic-settings==2.1.0
 python-dotenv==1.0.0
 networkx==3.6.1
-pyarrow==24.0.0
+pyarrow==24.0.0 # to read parquet files
 fsspec==2025.9.0
 
 # Database
 sqlalchemy==2.0.23
 asyncpg==0.29.0
+psycopg2-binary==2.9.11
 
 # Cache & Real-time
 redis==4.6.0

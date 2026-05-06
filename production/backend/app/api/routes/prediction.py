@@ -20,7 +20,8 @@ class RidePredictionResponse(BaseModel):
     pickup_location: str
     drop_location: str
     distance_km: float
-    estimated_time_min: float
+    estimated_pickup_time_minute: float
+    estimated_drop_time_minute: float
     vtat_min: float
     ctat_min: float
     estimated_price_idr: float

@@ -1,9 +1,12 @@
 import pandas as pd
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 from datetime import datetime
-from app.core.config import DATABASE_PATH
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
+from app.models.ride import Ride
 
 """Handles ride requests and history."""
 
@@ -17,6 +20,7 @@ class RideRequest(BaseModel):
 
 class RideResponse(BaseModel):
     id: str
+    user_id: str
     pickup_location: str
     drop_location: str
     vehicle_type: str
@@ -25,6 +29,8 @@ class RideResponse(BaseModel):
     estimated_drop_time_minute: float
     status: str
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 # Create function to map on row as responsbile
 def map_row_to_response(row) -> RideResponse:
@@ -36,44 +42,32 @@ def map_row_to_response(row) -> RideResponse:
         drop_location=row['Drop Location'].strip(),
         vehicle_type=row['Vehicle Type'].strip(),
         price=float(row['Booking Value']),
-        estimated_pickup_time_min=float(row['estimated_pickup_time_minute']),
-        estimated_drop_time_min=float(row['estimated_drop_time_minute']),
+        estimated_pickup_time_minute=float(row['estimated_pickup_time_minute']),
+        estimated_drop_time_minute=float(row['estimated_drop_time_minute']),
         status=str(row['Booking Status']).strip(),
         created_at=pd.to_datetime(row['Datetime'])
 )
-
-def load_rides_parquet() -> pd.DataFrame:
-    """Load rides data from parquet file."""
-    try:
-        return pd.read_parquet(DATABASE_PATH)
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="Rides data not found.")
-    
+   
 # Create router endpoint
-
 @router.post("/request")
-async def request_ride(ride_request: RideRequest):
+async def request_ride(ride_request: RideRequest, db: AsyncSession = Depends(get_db)):
     """"Reqyest a new ride."""
     try:
-        df = load_rides_parquet()
+        # Connect to postgresql database
+        query = select(Ride).where(
+            Ride.pickup_location == ride_request.pickup_location,
+            Ride.drop_location == ride_request.drop_location,
+            Ride.vehicle_type == ride_request.vehicle_type
+        )
+        result = await db.execute(query)
+        ride_data = result.scalars().first()
 
-        # Find matching ride from database
-        matching_rides = df[
-            (df['Pickup Location'] == ride_request.pickup_location) &
-            (df['Drop Location'] == ride_request.drop_location) &
-            (df['Vehicle Type'] == ride_request.vehicle_type)
-        ]
-
-        if matching_rides.empty:
-            raise HTTPException(status_code=404, detail="No matching rides found.")
+        if not ride_data:
+            raise HTTPException(status_code=404, detail="No matching rides found in database.")
         
-        # Get first matching ride
-        ride_data = matching_rides.iloc[0]
-        ride_response = map_row_to_response(ride_data)
-
         return {
             "message": f"Ride requested successfully for user {ride_request.user_id}.",
-            "ride": ride_response,
+            "ride": ride_data.to_dict(),
             "success": True
         }
     
@@ -83,23 +77,20 @@ async def request_ride(ride_request: RideRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 @router.get("/history/{user_id}", response_model=List[RideResponse])
-async def get_ride_history(user_id: str, limit: int = 50):
-    """Get ride history for user from database"""
+async def get_ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """Get ride history for user from PostgreSQL database."""
     try:
-        df = load_rides_parquet()
+        # Strip the user_id to handle any accidental whitespace
+        clean_user_id = user_id.strip()
 
-        # Filter by user_id
-        user_rides = df[df['user_id'] == user_id].head(limit)
+        # Query Postgres
+        query = select(Ride).where(Ride.user_id == clean_user_id).limit(limit)
+        result = await db.execute(query)
+        rides = result.scalars().all()
 
-        if user_rides.empty:
-            raise HTTPException(status_code=404, detail=f"No rides found for user {user_id}.")
-        
-        # Convert rows to RideResponse objects
-        rides = [map_row_to_response(row) for _, row in user_rides.iterrows()]
-
+        # Return empty list if no rides history found
         return rides
     
-    except HTTPException:
-        raise
     except Exception as e:
+        print(f"Error fetching history: {e}")
         raise HTTPException(status_code=500, detail=str(e))

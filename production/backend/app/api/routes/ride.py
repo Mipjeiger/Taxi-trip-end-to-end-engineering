@@ -31,6 +31,7 @@ def map_row_to_response(row) -> RideResponse:
     """Conver Dataframe frow to RideResponse."""
     return RideResponse(
         id=str(row['id']),
+        user_id=str(row['user_id']),
         pickup_location=row['Pickup Location'].strip(),
         drop_location=row['Drop Location'].strip(),
         vehicle_type=row['Vehicle Type'].strip(),

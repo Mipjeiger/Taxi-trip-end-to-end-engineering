@@ -76,7 +76,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({
     try {
       let response = '';
 
-      // Handle route-specific queries
+      // LLM queries based on API contexts
       if (routeContext && 
           (userInput.toLowerCase().includes('route') ||
            userInput.toLowerCase().includes('trip') ||
@@ -95,7 +95,8 @@ export const ChatBot: React.FC<ChatBotProps> = ({
         const conversation = [...messages, userMsg];
         response = await llmAPI.chat(conversation);
       }
-
+      
+      // Clear timeout and update messages with response
       clearTimeout(timeoutRef.current);
       setLoading(false);
       addMessage({

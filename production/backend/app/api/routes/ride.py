@@ -87,8 +87,8 @@ async def get_ride_history(user_id: str, limit: int = 50):
     try:
         df = load_rides_parquet()
 
-        # Filter by Booking ID containing user_id
-        user_rides = df[df['Booking ID'] == user_id].head(limit)
+        # Filter by user_id
+        user_rides = df[df['user_id'] == user_id].head(limit)
 
         if user_rides.empty:
             raise HTTPException(status_code=404, detail=f"No rides found for user {user_id}.")

@@ -28,7 +28,7 @@ class RouteRecommender:
             avg_traffic=("traffic_score", "mean"),
             demand=("route_demand", "mean"),
             complexity=("route_complexity", "mean"),
-            count=("Booking ID", "count"),
+            count=("user_id", "count"),
         ).reset_index()
         )
         for _, row in route_stats.iterrows():

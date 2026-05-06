@@ -130,7 +130,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({
       <div className="flex justify-between items-center p-4 border-b bg-green-500 text-white rounded-t-2xl">
         <div className="flex items-center gap-2">
           <Bot size={20} />
-          <span className="font-semibold">Trip Assistant</span>
+          <span className="font-semibold">Trip ChatBot</span>
           {loading && <span className="ml-2 animate-pulse">●</span>}
         </div>
         <button

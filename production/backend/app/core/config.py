@@ -15,11 +15,11 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # Match to .env postgresql - Supabase external postgresql configuration
-    DB_USER: str
-    DB_PASSWORD: str
-    DB_HOST: str
-    DB_PORT: int = 6543
-    DB_NAME: str = "postgres"
+    SUPABASE_USER: str
+    SUPABASE_PASSWORD: str
+    SUPABASE_HOST: str
+    SUPABASE_PORT: int = 6543
+    SUPABASE_DB: str = "postgres"
     USE_ASYNC_PG: bool = True
 
     # LLM Configuration
@@ -32,12 +32,12 @@ class Settings(BaseSettings):
     def DATABASE_URL(self) -> str:
         """Asyncrhonous database connection string for Supabase.
         Includes ssl=require which is mandatory for many cloud providers."""
-        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?ssl=require"
+        return f"postgresql+asyncpg://{self.SUPABASE_USER}:{self.SUPABASE_PASSWORD}@{self.SUPABASE_HOST}:{self.SUPABASE_PORT}/{self.SUPABASE_DB}?ssl=require"
         
     @property
     def DATABASE_URL_SYNC(self) -> str:
         """Synchronous database connection string for migrations or scripts."""
-        return f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?sslmode=require"
+        return f"postgresql+psycopg2://{self.SUPABASE_USER}:{self.SUPABASE_PASSWORD}@{self.SUPABASE_HOST}:{self.SUPABASE_PORT}/{self.SUPABASE_DB}?sslmode=require"
 
     # Pydantic V2 Configuration Style
     model_config = SettingsConfigDict(

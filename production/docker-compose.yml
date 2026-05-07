@@ -25,11 +25,11 @@ services:
       dockerfile: Dockerfile
     container_name: taxi_trip_backend
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
-      DB_NAME: ${DB_NAME}
+      SUPABASE_HOST: ${SUPABASE_HOST}
+      SUPABASE_PORT: ${SUPABASE_PORT}
+      SUPABASE_DB: ${SUPABASE_DB}
+      SUPABASE_USER: ${SUPABASE_USER}
+      SUPABASE_PASSWORD: ${SUPABASE_PASSWORD}
       REDIS_URL: ${REDIS_URL}
       CORS_ORIGINS: ${CORS_ORIGINS}
       LLM_PROVIDER: ${LLM_PROVIDER}

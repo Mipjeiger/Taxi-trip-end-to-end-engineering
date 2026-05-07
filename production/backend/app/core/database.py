@@ -10,7 +10,11 @@ Base = declarative_base()
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG, # For only echo SQL in debug mode
-    pool_pre_ping=True # Check connection health before using
+    pool_pre_ping=True, # Check connection health before using
+    connect_args={
+        "prepared_statement_cache_size": 0,
+        "statement_cache_size": 0,
+    }
 )
 
 # 3. Setup session factory

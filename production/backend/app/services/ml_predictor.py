@@ -59,27 +59,28 @@ class MLPredictor:
         # Predict CTAT (customer time to destination) and VTAT (vehicle time to pickup)
         ctat_pred = float(self.models['ctat'].predict(features_scaled)[0])
         vtat_pred = float(self.models['vtat'].predict(features_scaled)[0])
-        total_time = ctat_pred + vtat_pred
+
+        # Create logic to define estimated_pickup_time_minute
+        total_time_pickup = ctat_pred + vtat_pred
+
+        # Create logic to define estimated_drop_time_minute
+        total_time_drop = ctat_pred - vtat_pred
 
         # Use provided distance_km (should come from maps API)
         distance = distance_km
 
-        # Predict price (option 1: using neural network)
-        # price_pred = float(self.models['price'].predict(features_scaled)[0][0])
-        # Option 2: use heuristic formula (as fallback)
-        price = await self._calculate_price(distance, total_time, 
-                                            features['is_peak_hour'].iloc[0] if 'is_peak_hour' in features else 0)
+        price = await self._calculate_price(distance, total_time_pickup, features['is_peak_hour'].iloc[0] if 'is_peak_hour' in features else 0)
 
         return {
             'pickup_location': pickup,
             'drop_location': drop,
             'distance_km': round(distance, 2),
-            'estimated_pickup_time_minute': round(total_time, 2),
-            'estimated_drop_time_minute': round(cta,
+            'estimated_pickup_time_minute': round(total_time_pickup, 2),
+            'estimated_drop_time_minute': round(total_time_drop, 2),
             'vtat_min': round(vtat_pred, 2),
             'ctat_min': round(ctat_pred, 2),
             'estimated_price_idr': round(price, 2),
-            'average_speed_kmh': round(distance / (total_time / 60), 2) if total_time > 0 else 0,
+            'average_speed_kmh': round(distance / (total_time_pickup / 60), 2) if total_time_pickup > 0 else 0,
             'price_per_km': round(price / distance, 2) if distance > 0 else 0,
             'vehicle_type': vehicle_type,
         }

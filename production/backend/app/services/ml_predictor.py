@@ -20,7 +20,7 @@ class MLPredictor:
     async def load_models(self):
         """Load ML models and preprocessing objects."""
         try:
-            # CTAT and VTAT models (e.g., XGBoost / RandomForest)
+            # CTAT and VTAT models (Machine Learning models)
             self.models['ctat'] = pickle.load(open(self.models_path / "best_model_ctat_ultra.pkl", "rb"))
             self.models['vtat'] = pickle.load(open(self.models_path / "best_model_vtat_ultra.pkl", "rb"))
             

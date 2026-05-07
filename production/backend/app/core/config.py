@@ -14,12 +14,12 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:4002", "http://localhost"]
     REDIS_URL: str = "redis://localhost:6379"
 
-    # Match to .env postgresql
+    # Match to .env postgresql - Supabase external postgresql configuration
     DB_USER: str
     DB_PASSWORD: str
-    DB_HOST: str = "postgres" # Ensure service name matches with docker
-    DB_PORT: int = 5432
-    DB_NAME: str
+    DB_HOST: str
+    DB_PORT: int = 6543
+    DB_NAME: str = "postgres"
     USE_ASYNC_PG: bool = True
 
     # LLM Configuration
@@ -30,13 +30,14 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
-        """Asyncrhonous database connection string."""
-        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        """Asyncrhonous database connection string for Supabase.
+        Includes ssl=require which is mandatory for many cloud providers."""
+        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?ssl=require"
         
     @property
     def DATABASE_URL_SYNC(self) -> str:
         """Synchronous database connection string for migrations or scripts."""
-        return f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        return f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?sslmode=require"
 
     # Pydantic V2 Configuration Style
     model_config = SettingsConfigDict(
@@ -47,6 +48,8 @@ class Settings(BaseSettings):
         populate_by_name=True
     )
     
-settings = Settings() # Singleton instance
+# Singleton instance    
+settings = Settings()
 
-DB_CONNECTION_STRING = settings.DATABASE_URL # For backward compatibility
+# For backward compatibility
+DB_CONNECTION_STRING = settings.DATABASE_URL

@@ -24,12 +24,14 @@ logger = logging.getLogger("ride_api")
 
 # Load artefacts
 scaler = joblib.load(MODEL_DIR_2 / ["scaler_minmax.pkl", "scaler_ultra.pkl"][0])  # FIX 0: was scaler.pkl, now we have two scalers for price and time
-model_keras_price = load_model(MODEL_DIR_2 / "model_price_improved.keras")
-model_keras_time  = load_model(MODEL_DIR_2 / "model_time_improved.keras")
 feature_list   = joblib.load(MODEL_DIR_2 / ["features_new.pkl", "features_ultra.pkl", "features.pkl"][0])
 feature_list_ultra = joblib.load(MODEL_DIR_2 / "features_ultra.pkl")
 le_pickup      = joblib.load(MODEL_DIR_2 / "le_pickup.pkl")
 le_drop        = joblib.load(MODEL_DIR_2 / "le_drop.pkl")
+
+# Engineer Models
+model_keras_price = load_model(MODEL_DIR_2 / "model_price_improved.keras")
+model_keras_time  = load_model(MODEL_DIR_2 / "model_time_improved.keras")
 model_price_ml = joblib.load(MODEL_DIR_2 / "best_models_ultra_ctat.pkl")
 model_trip_ml  = joblib.load(MODEL_DIR_2 / "best_models_ultra_vtat.pkl")
 

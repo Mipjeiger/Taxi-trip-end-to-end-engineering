@@ -1,28 +1,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: taxi_trip_db
-    restart: always
-    environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME} -h localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - taxi_trip_network
-
   # Redis for caching and real-time features
   redis:
     image: redis:7-alpine
@@ -63,8 +41,6 @@ services:
       - ./backend/models:/app/models:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:

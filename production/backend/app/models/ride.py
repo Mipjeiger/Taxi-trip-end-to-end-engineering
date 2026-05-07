@@ -20,7 +20,6 @@ class Ride(Base):
     # ML Features integrated to app/services/ml_predictor.py
     pickup_encoded = Column(Integer, nullable=True)
     drop_encoded = Column(Integer, nullable=True)
-    vehicle_encoded = Column(Integer, nullable=True)
     hour = Column(Integer, nullable=True)
     day_of_week = Column(Integer, nullable=True)
     route_cluster = Column(Integer, nullable=True)

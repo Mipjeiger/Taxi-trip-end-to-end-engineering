@@ -29,6 +29,20 @@ class RideResponse(BaseModel):
     estimated_drop_time_minute: float
     status: str
     created_at: datetime
+    completed_at: Optional[datetime] = None
+    pickup_encoded: int
+    drop_encoded: int
+    hour: int
+    day_of_week: int
+    route_cluster: int
+    ride_distance: float
+    is_peak_hour: int
+    is_weekend: int
+    is_night: int
+    hour_sin: float
+    hour_cos: float
+    day_sin: float
+    day_cos: float
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -45,9 +59,23 @@ def map_row_to_response(row) -> RideResponse:
         estimated_pickup_time_minute=float(row['estimated_pickup_time_minute']),
         estimated_drop_time_minute=float(row['estimated_drop_time_minute']),
         status=str(row['Booking Status']).strip(),
-        created_at=pd.to_datetime(row['Datetime'])
-)
-   
+        created_at=pd.to_datetime(row['Datetime']),
+        completed_at=pd.to_datetime(row['completed_at']) if row['completed_at'] else None, # Target features to occur in backend API integration with ML Prediction
+        pickup_encoded=int(row['Pickup Encoded']),
+        drop_encoded=int(row['Drop Encoded']),
+        hour=int(row['hour']),
+        day_of_week=int(row['day_of_week']),
+        route_cluster=int(row['route_cluster']),
+        ride_distance=float(row['Ride Distance']),
+        is_peak_hour=int(row['is_peak_hour']),
+        is_weekend=int(row['is_weekend']),
+        is_night=int(row['is_night']),
+        hour_sin=float(row['hour_sin']),
+        hour_cos=float(row['hour_cos']),
+        day_sin=float(row['day_sin']),
+        day_cos=float(row['day_cos'])
+    )
+
 # Create router endpoint
 @router.post("/request")
 async def request_ride(ride_request: RideRequest, db: AsyncSession = Depends(get_db)):

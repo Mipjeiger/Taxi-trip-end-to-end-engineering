@@ -160,6 +160,10 @@ class MLPredictor:
 
             # Predict completion timestamp
             completed_at = await self.predict_completed_at(booking_datetime, ctat_pred)
+
+            # VTAT prediction to ensure the vehicle pickup time is reasonable
+            vehicle_arrival_at = await self.predict_vehicle_arrival(booking_datetime, vtat_pred)
+            vehicle_arrival_status = await self._calculate_vehicle_arrival_status(vtat_pred)
             
             # Return prediction into dictionary format
             return {
@@ -173,6 +177,9 @@ class MLPredictor:
                 "total_ride_time_minute": round(total_time, 2),
                 "estimated_completed_at": completed_at.isoformat(),
                 "estimated_price_idr": round(estimated_price, 2),
+                "estimated_vehicle_arrival_at": vehicle_arrival_at.isoformat(),
+                "estimated_vehicle_arrival_minute": round(vtat_pred, 2),
+                "vehicle_arrival_status": vehicle_arrival_status,
                 "price_per_km": round(estimated_price / distance_km, 2) if distance_km > 0 else 0,
                 "average_speed_kmh": round(distance_km / (total_time / 60), 2) if total_time > 0 else 0,
                 "is_peak_hour": bool(features_df['is_peak_hour'].values[0]),
@@ -381,6 +388,17 @@ class MLPredictor:
             logger.error(f"❌ Price calculation error: {e}")
             return 50000 # Default fallback price
         
+    async def _calculate_vehicle_arrival_status(self, vtat_minutes: float) -> str:
+        """
+        Calculate vehicle arrival status based on VTAT prediction.
+        
+        Status levels:
+        - "arriving_soon": VTAT < 5 min (vehicle nearly at pickup)
+        - "arriving": 5-15 min (vehicle on the way)
+        - "coming": 15-30 min (normal pickup time)
+        - "delayed": >= 30 min (longer than expected)
+        """
+        
     async def predict_completed_at(
             self,
             booking_datetime: datetime,
@@ -412,3 +430,28 @@ class MLPredictor:
         except Exception as e:
             logger.error(f"❌ Error predicting completion time: {e}")
             return booking_datetime + timedelta(minutes=30) # Default fallback completion time
+        
+    async def predict_vehicle_arrival(
+            self,
+            booking_datetime: datetime,
+            vtat_minutes: float
+    ) -> datetime:
+        """
+        Predict vehicle arrival timestamp at pickup location.
+        
+        Formula: vehicle_arrival_at = booking_datetime + VTAT
+        
+        Args:
+            booking_datetime: When ride was booked
+            vtat_minutes: Predicted VTAT from model
+            
+        Returns:
+            datetime: Predicted vehicle arrival timestamp
+        """
+        try:
+            vehicle_arrival_at = booking_datetime + timedelta(minutes=float(vtat_minutes))
+            logger.info(f"✅ Vehicle arrives at pickup: {vehicle_arrival_at}")
+            return vehicle_arrival_at
+        except Exception as e:
+            logger.error(f"❌ Error predicting vehicle arrival time: {e}")
+            return booking_datetime + timedelta(minutes=10)

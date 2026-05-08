@@ -39,6 +39,10 @@
     ![alt text](images/E427ECCA-417B-48E3-B76A-28FEEF4D43A5.png)
 
 - Build Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
+    - Target machine learning model
+        - Predict Price
+        - Predict completed at ride (timestamp for completing ride)
+        - predict VTAT = Vehicle Time to Arrive (pickup time)
     - Docker containeraize dependencies system to run in wraps
     ![alt text](images/CF98753F-E37E-4052-9861-FE9AAD0D6F40.png)
     - Create Database on PostgreSQL by occuring with docker

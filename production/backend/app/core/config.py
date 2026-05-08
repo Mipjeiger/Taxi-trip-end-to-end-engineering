@@ -7,7 +7,9 @@ DATABASE_PATH = BASE_DIR / 'backend' / 'database' / 'taxi_trip_engineering.parqu
 MODEL_PATH = BASE_DIR / 'backend' / 'models'
 
 # Env file path
-ENV_PATH = BASE_DIR / '.env'
+ENV_PATH = BASE_DIR.parent / 'production' / '.env'
+if not ENV_PATH.exists():
+    ENV_PATH = BASE_DIR / '.env'  # Fallback to root .env if not found in production
 
 class Settings(BaseSettings):
     # API Configuration

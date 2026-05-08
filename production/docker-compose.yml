@@ -28,7 +28,7 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     env_file:
-      - ./production/.env
+      - ./.env
     environment:
       SUPABASE_HOST: ${SUPABASE_HOST}
       SUPABASE_PORT: ${SUPABASE_PORT}

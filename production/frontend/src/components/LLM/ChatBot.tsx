@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, X } from 'lucide-react';
-import { llmAPI, ChatMessage } from '../../services/llmAPI';
+import llmAPI, { ChatMessage } from '../../services/llmAPI';  // Use default import
 import ReactMarkdown from 'react-markdown';
 import './css/Chatbot.css';
 
@@ -46,14 +46,6 @@ export const ChatBot: React.FC<ChatBotProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const addMessage = (msg: ChatMessage) => {
-    setMessages((prev) => {
-      const updated = [...prev, msg];
-      // Keep only last MAX_MESSAGES
-      return updated.slice(-MAX_MESSAGES);
-    });
-  };
-
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
 
@@ -67,42 +59,55 @@ export const ChatBot: React.FC<ChatBotProps> = ({
     // Set timeout for API call
     timeoutRef.current = setTimeout(() => {
       setLoading(false);
-      addMessage({
-        role: 'assistant',
-        content: '⏱️ Request timed out. Please try again.',
-      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: '⏱️ Request timed out. Please try again.',
+        },
+      ]);
     }, API_TIMEOUT);
 
     try {
       let response = '';
 
-      // LLM queries based on API contexts
-      if (routeContext && 
-          (userInput.toLowerCase().includes('route') ||
-           userInput.toLowerCase().includes('trip') ||
-           userInput.toLowerCase().includes('direction'))) {
+      // LLM queries based on context and keywords
+      if (
+        routeContext &&
+        (userInput.toLowerCase().includes('route') ||
+          userInput.toLowerCase().includes('trip') ||
+          userInput.toLowerCase().includes('direction') ||
+          userInput.toLowerCase().includes('fast') ||
+          userInput.toLowerCase().includes('best'))
+      ) {
         response = await llmAPI.askRoute(userInput, routeContext);
       }
       // Handle price-specific queries
-      else if (priceContext &&
-               (userInput.toLowerCase().includes('price') ||
-                userInput.toLowerCase().includes('cost') ||
-                userInput.toLowerCase().includes('fare'))) {
+      else if (
+        priceContext &&
+        (userInput.toLowerCase().includes('price') ||
+          userInput.toLowerCase().includes('cost') ||
+          userInput.toLowerCase().includes('fare') ||
+          userInput.toLowerCase().includes('how much'))
+      ) {
         response = await llmAPI.askPrice(userInput, priceContext);
       }
-      // Default: general chat
+      // Default: general chat with conversation history
       else {
-        const conversation = [...messages, userMsg];
+        const conversation: ChatMessage[] = [...messages, userMsg];
         response = await llmAPI.chat(conversation);
       }
-      
+
       // Clear timeout and update messages with response
       clearTimeout(timeoutRef.current);
       setLoading(false);
-      addMessage({
-        role: 'assistant',
-        content: response || 'I didn\'t get a response. Please try again.',
-      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: response || 'I didn\'t get a response. Please try again.',
+        },
+      ]);
     } catch (error: any) {
       clearTimeout(timeoutRef.current);
       setLoading(false);
@@ -110,14 +115,19 @@ export const ChatBot: React.FC<ChatBotProps> = ({
       const errorMsg =
         error?.response?.status === 429
           ? '⚠️ Too many requests. Please wait a moment and try again.'
+          : error?.response?.status === 401
+          ? '🔐 Authentication failed. Please check your API key.'
           : error?.message?.includes('timeout')
           ? '⏱️ Request took too long. Please try again.'
-          : '❌ Sorry, something went wrong. Please try again.';
+          : error?.message || '❌ Sorry, something went wrong. Please try again.';
 
-      addMessage({
-        role: 'assistant',
-        content: errorMsg,
-      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: errorMsg,
+        },
+      ]);
 
       console.error('Chat error:', error);
     }
@@ -153,12 +163,12 @@ export const ChatBot: React.FC<ChatBotProps> = ({
             <div
               className={`max-w-[80%] rounded-lg p-3 ${
                 msg.role === 'user'
-                  ? 'bg-green-500 text-white'
-                  : 'bg-gray-100 text-gray-800'
+                  ? 'bg-green-500 text-white rounded-br-none'
+                  : 'bg-gray-100 text-gray-800 rounded-bl-none'
               }`}
             >
               {msg.role === 'assistant' ? (
-                <div className="prose prose-sm">
+                <div className="prose prose-sm max-w-none">
                   <ReactMarkdown>{msg.content}</ReactMarkdown>
                 </div>
               ) : (
@@ -171,11 +181,11 @@ export const ChatBot: React.FC<ChatBotProps> = ({
         {/* Typing Indicator */}
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-lg p-3">
+            <div className="bg-gray-100 rounded-lg p-3 rounded-bl-none">
               <div className="flex gap-1">
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></span>
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></span>
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
               </div>
             </div>
           </div>
@@ -185,7 +195,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t">
+      <div className="p-3 border-t bg-gray-50">
         <div className="flex gap-2">
           <input
             type="text"
@@ -200,7 +210,7 @@ export const ChatBot: React.FC<ChatBotProps> = ({
           <button
             onClick={sendMessage}
             disabled={loading || !input.trim()}
-            className="bg-green-500 text-white p-2 rounded-lg hover:bg-green-600 disabled:opacity-50 transition"
+            className="bg-green-500 text-white p-2 rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition"
             aria-label="Send message"
           >
             <Send size={20} />
@@ -210,3 +220,5 @@ export const ChatBot: React.FC<ChatBotProps> = ({
     </div>
   );
 };
+
+export default ChatBot;

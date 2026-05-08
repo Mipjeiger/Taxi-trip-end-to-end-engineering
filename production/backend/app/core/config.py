@@ -34,8 +34,17 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
-        """Asyncrhonous database connection string for Supabase. Includes ssl=require which is mandatory for many cloud providers."""
-        return f"postgresql+asyncpg://{self.SUPABASE_USER}:{self.SUPABASE_PASSWORD}@{self.SUPABASE_HOST}:{self.SUPABASE_PORT}/{self.SUPABASE_DB}"
+        """
+        Asyncrhonous database connection string for Supabase transaction pooler.
+        
+        Format: postgresql+asyncpg://postgres.PROJECT_REF:PASSWORD@aws-*.pooler.supabase.com:6543/postgres
+        
+        Critical: statement_cache_size=0 disables prepared statements (required for transaction pooler)
+        """
+        return (
+        f"postgresql+asyncpg://{self.SUPABASE_USER}:{self.SUPABASE_PASSWORD}"
+        f"@{self.SUPABASE_HOST}:{self.SUPABASE_PORT}/{self.SUPABASE_DB}"
+      )
         
     @property
     def DATABASE_URL_SYNC(self) -> str:

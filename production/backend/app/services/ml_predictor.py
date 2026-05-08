@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import pickle
-from typing import Dict
+from typing import Dict, Optional
 from pathlib import Path
 from tensorflow.keras.models import load_model
 import logging
@@ -9,6 +9,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 class MLPredictor:
+    """
+    Unified ML Predictor for Taxi Trip predictions.
+    
+    Models Used:
+    ├── CTAT (Customer Time to Arrival) - Regression
+    │   ├── best_model_ctat_ultra.pkl (XGBoost/LightGBM - PRIMARY)
+    │   └── model_time_improved.keras (TensorFlow - FALLBACK)
+    │
+    └── VTAT (Vehicle Time to Arrival) - Regression
+        ├── best_model_vtat_ultra.pkl (XGBoost/LightGBM - PRIMARY)
+        └── model_price_improved.keras (TensorFlow - FALLBACK)
+    """
     def __init__(self):
         self.models_path = Path(__file__).parent.parent.parent / "models"
         self.models = {}
@@ -122,8 +134,8 @@ class MLPredictor:
             'day_sin': np.sin(2 * np.pi * day_of_week / 7),
             'day_cos': np.cos(2 * np.pi * day_of_week / 7),
         }
-
         df = pd.DataFrame([feature_dict])
+
         # Ensure all expected features exist (fill missing with 0)
         for col in self.features:
             if col not in df.columns:

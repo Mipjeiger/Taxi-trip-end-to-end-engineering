@@ -1,124 +1,332 @@
-import pandas as pd
+import logging
+import uuid
+import numpy as np
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, ConfigDict
-from typing import List, Optional
-from datetime import datetime
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timedelta
+
 from app.core.database import get_db
 from app.models.ride import Ride
+from app.models.prediction import (
+    RideCreationRequest,
+    RideResponse,
+    BookingStatus,
+    VehicleArrivalStatus
+)
+from app.services.ml_predictor import MLPredictor
+from app.api.dependencies import get_ml_predictor
 
-"""Handles ride requests and history."""
-
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-class RideRequest(BaseModel):
-    pickup_location: str
-    drop_location: str
-    vehicle_type: str
-    user_id: str
-
-class RideResponse(BaseModel):
-    id: str
-    user_id: str
-    pickup_location: str
-    drop_location: str
-    vehicle_type: str
-    price: float
-    estimated_pickup_time_minute: float
-    estimated_drop_time_minute: float
-    status: str
-    created_at: datetime
-    completed_at: Optional[datetime] = None
-    pickup_encoded: int
-    drop_encoded: int
-    hour: int
-    day_of_week: int
-    route_cluster: int
-    ride_distance: float
-    is_peak_hour: int
-    is_weekend: int
-    is_night: int
-    hour_sin: float
-    hour_cos: float
-    day_sin: float
-    day_cos: float
-
-    model_config = ConfigDict(from_attributes=True)
-
-# Create function to map on row as responsbile
-def map_row_to_response(row) -> RideResponse:
-    """Conver Dataframe frow to RideResponse."""
-    return RideResponse(
-        id=str(row['id']),
-        user_id=str(row['user_id']),
-        pickup_location=row['Pickup Location'].strip(),
-        drop_location=row['Drop Location'].strip(),
-        vehicle_type=row['Vehicle Type'].strip(),
-        price=float(row['Booking Value']),
-        estimated_pickup_time_minute=float(row['estimated_pickup_time_minute']),
-        estimated_drop_time_minute=float(row['estimated_drop_time_minute']),
-        status=str(row['Booking Status']).strip(),
-        created_at=pd.to_datetime(row['Datetime']),
-        completed_at=pd.to_datetime(row['completed_at']) if row['completed_at'] else None, # Target features to occur in backend API integration with ML Prediction
-        pickup_encoded=int(row['Pickup Encoded']),
-        drop_encoded=int(row['Drop Encoded']),
-        hour=int(row['hour']),
-        day_of_week=int(row['day_of_week']),
-        route_cluster=int(row['route_cluster']),
-        ride_distance=float(row['Ride Distance']),
-        is_peak_hour=int(row['is_peak_hour']),
-        is_weekend=int(row['is_weekend']),
-        is_night=int(row['is_night']),
-        hour_sin=float(row['hour_sin']),
-        hour_cos=float(row['hour_cos']),
-        day_sin=float(row['day_sin']),
-        day_cos=float(row['day_cos'])
-    )
-
-# Create router endpoint
-@router.post("/request")
-async def request_ride(ride_request: RideRequest, db: AsyncSession = Depends(get_db)):
-    """"Reqyest a new ride."""
+@router.post("/create", response_model=RideResponse)
+async def create_ride_with_prediction(
+    request: RideCreationRequest,
+    db: AsyncSession = Depends(get_db),
+    ml_predictor: MLPredictor = Depends(get_ml_predictor)
+):
+    """
+    Create new ride with ML predictions including VTAT vehicle arrival.
+    
+    Flow:
+    1. Get ML predictions (VTAT, CTAT, price)
+    2. Create ride record in database
+    3. Return ride with vehicle arrival timestamp
+    """
     try:
-        # Connect to postgresql database
-        query = select(Ride).where(
-            Ride.pickup_location == ride_request.pickup_location,
-            Ride.drop_location == ride_request.drop_location,
-            Ride.vehicle_type == ride_request.vehicle_type
+        booking_datetime = datetime.utcnow()
+        
+        # Get ML predictions
+        prediction = await ml_predictor.predict_ride_metrics(
+            pickup=request.pickup_location,
+            drop=request.drop_location,
+            vehicle_type=request.vehicle_type,
+            hour=booking_datetime.hour,
+            day_of_week=booking_datetime.weekday(),
+            distance_km=request.distance_km,
+            booking_datetime=booking_datetime,
+            demand_pressure=request.demand_pressure,
+            rating_avg=request.rating_avg
         )
-        result = await db.execute(query)
-        ride_data = result.scalars().first()
+        
+        # Parse VTAT timestamp for database storage
+        vtat_timestamp = None
+        if 'estimated_vehicle_arrival_at' in prediction:
+            try:
+                vtat_str = prediction['estimated_vehicle_arrival_at']
+                vtat_timestamp = datetime.fromisoformat(vtat_str.replace('Z', '+00:00'))
+            except Exception as e:
+                logger.warning(f"Could not parse VTAT timestamp: {e}")
+                vtat_timestamp = None
+        
+        # Extract ML features for database storage
+        feature_dict = await _extract_ride_features(
+            pickup=request.pickup_location,
+            drop=request.drop_location,
+            vehicle_type=request.vehicle_type,
+            booking_datetime=booking_datetime,
+            distance_km=request.distance_km
+        )
+        
+        # Create ride record
+        new_ride = Ride(
+            id=f"RIDE-{uuid.uuid4().hex[:12].upper()}",
+            user_id=request.user_id,
+            pickup_location=request.pickup_location,
+            drop_location=request.drop_location,
+            vehicle_type=request.vehicle_type,
+            price=prediction.get('estimated_price_idr'),
+            estimated_pickup_time_minute=prediction.get('estimated_vehicle_arrival_minute'),  # VTAT
+            estimated_drop_time_minute=prediction.get('estimated_drop_time_minute'),          # CTAT
+            
+            # Status starts as Pending for new bookings
+            status=BookingStatus.PENDING.value,
+            created_at=booking_datetime,
+            completed_at=None,
+            vtat=vtat_timestamp,  # Vehicle arrival timestamp
+            
+            # ML Features
+            **feature_dict
+        )
+        
+        db.add(new_ride)
+        await db.commit()
+        await db.refresh(new_ride)
+        
+        logger.info(f"✅ Ride created: {new_ride.id} | VTAT: {vtat_timestamp} | Status: {new_ride.status}")
+        
+        return RideResponse.model_validate(new_ride)
+    
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ Ride creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create ride: {str(e)}")
 
-        if not ride_data:
-            raise HTTPException(status_code=404, detail="No matching rides found in database.")
+
+@router.get("/history/{user_id}", response_model=list[RideResponse])
+async def get_ride_history(
+    user_id: str,
+    limit: int = 100,
+    status: str = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get ride history for user, optionally filtered by status.
+    
+    Status options: Pending, Completed, Cancelled by Driver, etc.
+    """
+    try:
+        query = select(Ride).where(Ride.user_id == user_id)
+        
+        # Filter by status if provided
+        if status:
+            query = query.where(Ride.status == status)
+        
+        query = query.order_by(Ride.created_at.desc()).limit(limit)
+        
+        result = await db.execute(query)
+        rides = result.scalars().all()
+        
+        return [RideResponse.model_validate(ride) for ride in rides]
+    
+    except Exception as e:
+        logger.error(f"Error fetching ride history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{ride_id}", response_model=RideResponse)
+async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_db)):
+    """Get specific ride details including VTAT vehicle arrival"""
+    try:
+        query = select(Ride).where(Ride.id == ride_id)
+        result = await db.execute(query)
+        ride = result.scalars().first()
+        
+        if not ride:
+            raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
+        
+        return RideResponse.model_validate(ride)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching ride: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{ride_id}/status")
+async def update_ride_status(
+    ride_id: str,
+    new_status: BookingStatus,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update ride status (Completed, Cancelled by Driver, etc.)
+    
+    Valid statuses: Completed, Cancelled by Driver, No Driver Found, 
+                   Cancelled by Customer, Incomplete, Pending
+    """
+    try:
+        query = select(Ride).where(Ride.id == ride_id)
+        result = await db.execute(query)
+        ride = result.scalars().first()
+        
+        if not ride:
+            raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
+        
+        # Update status
+        ride.status = new_status.value
+        
+        # Set completed_at if ride is completed
+        if new_status == BookingStatus.COMPLETED:
+            ride.completed_at = datetime.utcnow()
+        
+        await db.commit()
+        await db.refresh(ride)
+        
+        logger.info(f"✅ Ride {ride_id} status updated to {new_status.value}")
         
         return {
-            "message": f"Ride requested successfully for user {ride_request.user_id}.",
-            "ride": ride_data.to_dict(),
-            "success": True
+            "success": True,
+            "ride_id": ride_id,
+            "status": ride.status,
+            "completed_at": ride.completed_at.isoformat() if ride.completed_at else None
         }
     
     except HTTPException:
         raise
     except Exception as e:
+        await db.rollback()
+        logger.error(f"Error updating ride status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-    
-@router.get("/history/{user_id}", response_model=List[RideResponse])
-async def get_ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_db)):
-    """Get ride history for user from PostgreSQL database."""
+
+
+@router.get("/stats/by_status")
+async def get_stats_by_status(db: AsyncSession = Depends(get_db)):
+    """Get ride statistics grouped by booking status"""
     try:
-        # Strip the user_id to handle any accidental whitespace
-        clean_user_id = user_id.strip()
-
-        # Query Postgres
-        query = select(Ride).where(Ride.user_id == clean_user_id).limit(limit)
+        query = select(Ride)
         result = await db.execute(query)
-        rides = result.scalars().all()
-
-        # Return empty list if no rides history found
-        return rides
+        all_rides = result.scalars().all()
+        
+        # Count by status
+        status_counts = {}
+        for ride in all_rides:
+            status = ride.status
+            status_counts[status] = status_counts.get(status, 0) + 1
+        
+        return {
+            "total_rides": len(all_rides),
+            "by_status": status_counts,
+            "summary": {
+                "completed": status_counts.get(BookingStatus.COMPLETED.value, 0),
+                "cancelled": (
+                    status_counts.get(BookingStatus.CANCELLED_BY_DRIVER.value, 0) +
+                    status_counts.get(BookingStatus.CANCELLED_BY_CUSTOMER.value, 0)
+                ),
+                "no_driver": status_counts.get(BookingStatus.NO_DRIVER_FOUND.value, 0),
+                "pending": status_counts.get(BookingStatus.PENDING.value, 0)
+            }
+        }
     
     except Exception as e:
-        print(f"Error fetching history: {e}")
+        logger.error(f"Error fetching stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stats/vtat_analysis")
+async def vtat_analysis(db: AsyncSession = Depends(get_db)):
+    """Analyze VTAT predictions vs actual arrival times"""
+    try:
+        query = select(Ride).where(Ride.vtat.isnot(None))
+        result = await db.execute(query)
+        rides_with_vtat = result.scalars().all()
+        
+        if not rides_with_vtat:
+            return {"message": "No VTAT data available"}
+        
+        # Calculate statistics
+        vtat_minutes = []
+        for ride in rides_with_vtat:
+            if ride.vtat and ride.created_at:
+                vtat_min = (ride.vtat - ride.created_at).total_seconds() / 60
+                vtat_minutes.append(vtat_min)
+        
+        if vtat_minutes:
+            vtat_array = np.array(vtat_minutes)
+            return {
+                "total_predictions": len(vtat_minutes),
+                "vtat_statistics": {
+                    "mean_minutes": float(np.mean(vtat_array)),
+                    "median_minutes": float(np.median(vtat_array)),
+                    "std_dev": float(np.std(vtat_array)),
+                    "min_minutes": float(np.min(vtat_array)),
+                    "max_minutes": float(np.max(vtat_array))
+                }
+            }
+        else:
+            return {"message": "Unable to calculate VTAT statistics"}
+    
+    except Exception as e:
+        logger.error(f"Error analyzing VTAT: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Helper function
+async def _extract_ride_features(
+    pickup: str,
+    drop: str,
+    vehicle_type: str,
+    booking_datetime: datetime,
+    distance_km: float
+) -> dict:
+    """Extract ML features for database storage"""
+    try:
+        hour = booking_datetime.hour
+        day_of_week = booking_datetime.weekday()
+        
+        # Time-based features
+        is_peak_hour = 1 if (7 <= hour <= 9 or 17 <= hour <= 19) else 0
+        is_weekend = 1 if day_of_week >= 5 else 0
+        is_night = 1 if hour >= 22 or hour < 5 else 0
+        
+        # Cyclical encoding
+        hour_sin = np.sin(2 * np.pi * hour / 24)
+        hour_cos = np.cos(2 * np.pi * hour / 24)
+        day_sin = np.sin(2 * np.pi * day_of_week / 7)
+        day_cos = np.cos(2 * np.pi * day_of_week / 7)
+        
+        return {
+            "pickup_encoded": hash(pickup) % 1000,
+            "drop_encoded": hash(drop) % 1000,
+            "hour": hour,
+            "day_of_week": day_of_week,
+            "route_cluster": hash(f"{pickup}_{drop}") % 100,
+            "ride_distance": distance_km,
+            "is_peak_hour": is_peak_hour,
+            "is_weekend": is_weekend,
+            "is_night": is_night,
+            "hour_sin": hour_sin,
+            "hour_cos": hour_cos,
+            "day_sin": day_sin,
+            "day_cos": day_cos
+        }
+    
+    except Exception as e:
+        logger.warning(f"Error extracting features: {e}, using defaults")
+        return {
+            "pickup_encoded": 0,
+            "drop_encoded": 0,
+            "hour": 0,
+            "day_of_week": 0,
+            "route_cluster": 0,
+            "ride_distance": distance_km,
+            "is_peak_hour": 0,
+            "is_weekend": 0,
+            "is_night": 0,
+            "hour_sin": 0.0,
+            "hour_cos": 1.0,
+            "day_sin": 0.0,
+            "day_cos": 1.0
+        }

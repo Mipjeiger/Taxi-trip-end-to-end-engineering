@@ -1,32 +1,129 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from enum import Enum
 
-class PredictionCache(BaseModel):
-    pickup: str
-    drop: str
+# Booking status enumeration matching dataframe values
+class BookingStatus(str, Enum):
+    """Booking status from 'Booking Status' column in data"""
+    COMPLETED = "Completed"
+    CANCELLED_BY_DRIVER =  "Cancelled by Driver"
+    NO_DRIVER_FOUND = "No Driver Found"
+    CANCELLED_BY_CUSTOMER = "Cancelled by Customer"
+    INCOMPLETE = "Incomplete"
+    PENDING = "Pending"
+
+# Vehicle arrival status based on VTAT
+class VehicleArrivalStatus(str, Enum):
+    """Vehicle arrival status based on prediction"""
+    ARRIVING_SOON = "arriving_soon"  # VTAT < 5 minutes
+    ARRIVING = "arriving"               # 5-15 min
+    COMING = "coming"                   # 15-30 min
+    DELAYED = "delayed"                 # >= 30 min
+
+class PredictionRequest(BaseModel):
+    """ML prediction request with vehicle type validation"""
+    pickup_location: str
+    drop_location: str
+    vehicle_type: str = Field(
+        "Car",
+        pattern="^(Car|Motorcycle|Auto|Go Sedan|Premier Sedan|eBike|Uber XL)$",
+        description="One of: Car, Motorcycle, Auto, Go Sedan, Premier Sedan, eBike, Uber XL"
+    )
+    hour: Optional[int] = Field(None, ge=0, le=23)
+    day_of_week: Optional[int] = Field(None, ge=0, le=6)
+    distance_km: Optional[float] = Field(10.0, gt=0)
+    demand_pressure: Optional[float] = Field(500.0, ge=170, le=777)
+    rating_avg: Optional[float] = Field(4.5, ge=3.8, le=5.0)
+
+class RidePredictionResponse(BaseModel):
+    """Complete ride prediction with VTAT vehicle arrival data"""
+    # Location & vehicle info
+    pickup_location: str
+    drop_location: str
     vehicle_type: str
-    hour: int
-    day_of_week: int
     distance_km: float
-    time_min: float
-    price_idr: float
-    created_at: float = datetime.now().timestamp()
 
-    # Create class config to estimate prediction cache (e.g. example data for documentation)
+    # Booking time
+    booking_datetime: datetime
+
+    # Timing predictions
+    estimated_pickup_time_minute: float
+    estimated_drop_time_minute: float
+    total_ride_time_minute: float
+
+    # VTAT - Vehicle arrival tracking (new features added)
+    estimated_vehicle_arrival_at: datetime # When vehicle arrives at pickup
+    estimated_vehicle_arrival_minute: float # VTAT in minutes
+    vehicle_arrival_status: str # arriving_soon, arriving, coming, delayed
+
+    # Pricing predictions
+    estimated_price_idr: float
+    price_per_km: float
+    average_speed_kmh: float
+
+    # Contextual features
+    is_peak_hour: bool
+    demand_pressure: float
+    rating_avg: float
+
+    # Model info
+    model_confidence: str
+
     class Config:
         json_schema_extra = {
             "example": {
-                "pickup": "Kali Anyar",
-                "drop": "Rawamangun",
+                "pickup_location": "Kali Anyar",
+                "drop_location": "Rawamangun",
                 "vehicle_type": "Car",
-                "hour": 14,
-                "day_of_week": 3,
                 "distance_km": 39.29,
-                "time_min": 15.2,
-                "price_idr": 114000.0
+                "booking_datetime": "2024-01-01T14:00:00",
+                "estimated_pickup_time_minute": 8.5,
+                "estimated_drop_time_minute": 15.2,
+                "total_ride_time_minute": 23.7,
+                "estimated_vehicle_arrival_at": "2024-01-01T14:08:30",
+                "estimated_vehicle_arrival_minute": 8.5,
+                "vehicle_arrival_status": "arriving",
+                "estimated_completed_at": "2024-01-01T14:15:12",
+                "estimated_price_idr": 114000.0,
+                "price_per_km": 2900.0,
+                "average_speed_kmh": 99.3,
+                "is_peak_hour": True,
+                "demand_pressure": 600.0,
+                "rating_avg": 4.5,
+                "model_confidence": "high"
             }
         }
 
-# Usage backend
-Prediction = PredictionCache
+class RideCreationRequest(BaseModel):
+    """Request to create new ride with prediction"""
+    user_id: str
+    pickup_location: str
+    drop_location: str
+    vehicle_type: str
+    price: Optional[float]
+    estimated_pickup_time_minute: float
+    estimated_drop_time_minute: float
+    status: BookingStatus
+    created_at: datetime
+    completed_at: Optional[datetime]
+    vtat: Optional[datetime] # Vehicle arrival timesamp
+
+    # ML features
+    pickup_encoded: Optional[int]
+    drop_encoded: Optional[int]
+    hour: Optional[int]
+    day_of_week: Optional[int]
+    route_cluster: Optional[int]
+    ride_distance: Optional[float]
+    is_peak_hour: Optional[int]
+    is_weekend: Optional[int]
+    is_night: Optional[int]
+    hour_sin: Optional[float]
+    hour_cos: Optional[float]
+    day_sin: Optional[float]
+    day_cos: Optional[float]
+
+
+    class Config:
+        from_attributes = True

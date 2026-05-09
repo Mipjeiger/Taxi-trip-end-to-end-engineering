@@ -11,8 +11,8 @@ class Ride(Base):
     drop_location = Column(String, nullable=False)
     vehicle_type = Column(String, nullable=False)
     price = Column(Float, nullable=False)
-    estimated_pickup_time_minute = Column(Float, nullable=False)
-    estimated_drop_time_minute = Column(Float, nullable=False)
+    estimated_pickup_time_minute = Column(Float, nullable=False) # VTAT - prediction
+    estimated_drop_time_minute = Column(Float, nullable=False) # CTAT - prediction
     created_at = Column(DateTime, default=datetime.now)
     completed_at = Column(DateTime, nullable=True)
 
@@ -39,8 +39,11 @@ class Ride(Base):
     status = Column(String, nullable=False)
     completed_at = Column(DateTime, nullable=True)
 
-    # VTAT
+    # VTAT - Vehicle arrival timestamp at pickup
     vtat = Column(DateTime, nullable=True)  # Vehicle Time to Arrival prediction
 
     def to_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+    
+    def __repr__(self):
+        return f"<Ride(id={self.id}, user={self.user_id}, status={self.status})>"

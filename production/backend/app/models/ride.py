@@ -13,7 +13,6 @@ class Ride(Base):
     price = Column(Float, nullable=False)
     estimated_pickup_time_minute = Column(Float, nullable=False)
     estimated_drop_time_minute = Column(Float, nullable=False)
-    status = Column(String, default='pending')
     created_at = Column(DateTime, default=datetime.now)
     completed_at = Column(DateTime, nullable=True)
 
@@ -37,9 +36,11 @@ class Ride(Base):
     day_cos = Column(Float, nullable=True)
 
     # Status & Timestamps
-    status = Column(String, default='pending')
-    created_at = Column(DateTime, default=datetime.now)
+    status = Column(String, nullable=False)
     completed_at = Column(DateTime, nullable=True)
+
+    # VTAT
+    vtat = Column(DateTime, nullable=True)  # Vehicle Time to Arrival prediction
 
     def to_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}

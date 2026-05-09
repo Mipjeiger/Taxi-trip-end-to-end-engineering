@@ -398,6 +398,23 @@ class MLPredictor:
         - "coming": 15-30 min (normal pickup time)
         - "delayed": >= 30 min (longer than expected)
         """
+        try:
+            vtat = float(vtat_minutes)
+        
+            if vtat < 5:
+                status = "arriving_soon"
+            elif vtat < 15:
+                status = "arriving"
+            elif vtat < 30:
+                status = "coming"
+            else:
+                status = "delayed"
+
+            logger.info(f"Vehicle arrival status based on VTAT {vtat:.1f} min: {status}")
+            return status
+        except Exception as e:
+            logger.error(f"❌ Error calculating vehicle arrival status: {e}")
+            return "coming"
         
     async def predict_completed_at(
             self,

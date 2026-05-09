@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 from enum import Enum
@@ -70,8 +70,8 @@ class RidePredictionResponse(BaseModel):
     # Model info
     model_confidence: str
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "pickup_location": "Kali Anyar",
                 "drop_location": "Rawamangun",
@@ -93,7 +93,9 @@ class RidePredictionResponse(BaseModel):
                 "rating_avg": 4.5,
                 "model_confidence": "high"
             }
-        }
+        },
+        protected_namespaces=()
+    )
 
 class RideCreationRequest(BaseModel):
     """Request to create new ride with prediction"""
@@ -124,6 +126,37 @@ class RideCreationRequest(BaseModel):
     day_sin: Optional[float]
     day_cos: Optional[float]
 
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
-    class Config:
-        from_attributes = True
+
+class RideResponse(BaseModel):
+    """Response for database ride record with all fields"""
+    id: str
+    user_id: str
+    pickup_location: str
+    drop_location: str
+    vehicle_type: str
+    price: Optional[float]
+    estimated_pickup_time_minute: float  # VTAT
+    estimated_drop_time_minute: float    # CTAT
+    status: str  # BookingStatus value
+    created_at: datetime
+    completed_at: Optional[datetime]
+    vtat: Optional[datetime]  # Vehicle arrival timestamp
+    
+    # ML Features
+    pickup_encoded: Optional[int]
+    drop_encoded: Optional[int]
+    hour: Optional[int]
+    day_of_week: Optional[int]
+    route_cluster: Optional[int]
+    ride_distance: Optional[float]
+    is_peak_hour: Optional[int]
+    is_weekend: Optional[int]
+    is_night: Optional[int]
+    hour_sin: Optional[float]
+    hour_cos: Optional[float]
+    day_sin: Optional[float]
+    day_cos: Optional[float]
+    
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())

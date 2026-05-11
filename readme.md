@@ -51,6 +51,8 @@
         - Driver tracking for ride history
         ![alt text](images/261D920B-A831-4C0D-9444-951490A0C8B6.png)
         - 
+    - Kafka to retrive data click button from customer
+    - Airflow for orchestration data ingesting
     
 - Build UI Taxi apps for user (Production Grade)
     - UI display in mobile apps

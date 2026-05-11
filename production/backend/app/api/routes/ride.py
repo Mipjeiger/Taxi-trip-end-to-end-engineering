@@ -108,21 +108,17 @@ async def create_ride_with_prediction(
 async def get_ride_history(
     user_id: str,
     limit: int = 100,
-    status: str = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get ride history for user, optionally filtered by status.
+    Get ride history for user.
     
-    Status options: Pending, Completed, Cancelled by Driver, etc.
+    Parameters:
+    - user_id: User ID (path parameter)
+    - limit: Maximum number of rides to return (default 100)
     """
     try:
         query = select(Ride).where(Ride.user_id == user_id)
-        
-        # Filter by status if provided
-        if status:
-            query = query.where(Ride.status == status)
-        
         query = query.order_by(Ride.created_at.desc()).limit(limit)
         
         result = await db.execute(query)

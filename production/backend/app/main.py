@@ -14,6 +14,10 @@ from app.services.vehicle_recommender import VehicleRecommender
 from app.services.surge_recommender import SurgeRecommender
 from app.services.churn_recommender import ChurnRecommender
 from app.services.matching_recommender import MatchingRecommender
+from app.api.dependencies import (
+    set_ml_predictor, set_vehicle_recommender, set_surge_recommender,
+    set_churn_recommender, set_matching_recommender
+)
 from app.core.redis_client import get_redis
 
 # Prometheus metrics
@@ -81,13 +85,18 @@ async def lifespan(app: FastAPI):
         # Load ML models
         ml_predictor = MLPredictor()
         await ml_predictor.load_models()   # note: method is load_models, not load_model
+        set_ml_predictor(ml_predictor)  # Store in global for dependency injection
         
         # Initialize Redis client
         redis_client = await get_redis()
         vehicle_recommender = VehicleRecommender(redis_client)
+        set_vehicle_recommender(vehicle_recommender)
         surge_recommender = SurgeRecommender(redis_client)
+        set_surge_recommender(surge_recommender)
         churn_recommender = ChurnRecommender()
+        set_churn_recommender(churn_recommender)
         matching_recommender = MatchingRecommender(redis_client)
+        set_matching_recommender(matching_recommender)
          
         logger.info("Initialization complete.")
     except Exception as e:

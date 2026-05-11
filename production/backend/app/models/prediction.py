@@ -98,35 +98,32 @@ class RidePredictionResponse(BaseModel):
     )
 
 class RideCreationRequest(BaseModel):
-    """Request to create new ride with prediction"""
+    """Request to create new ride with ML predictions (simple client input)"""
     user_id: str
     pickup_location: str
     drop_location: str
-    vehicle_type: str
-    price: Optional[float]
-    estimated_pickup_time_minute: float
-    estimated_drop_time_minute: float
-    status: BookingStatus
-    created_at: datetime
-    completed_at: Optional[datetime]
-    vtat: Optional[datetime] # Vehicle arrival timesamp
+    vehicle_type: str = Field(
+        "Car",
+        pattern="^(Car|Motorcycle|Auto|Go Sedan|Premier Sedan|eBike|Uber XL)$"
+    )
+    distance_km: Optional[float] = Field(10.0, gt=0)
+    demand_pressure: Optional[float] = Field(500.0, ge=170, le=777)
+    rating_avg: Optional[float] = Field(4.5, ge=3.8, le=5.0)
 
-    # ML features
-    pickup_encoded: Optional[int]
-    drop_encoded: Optional[int]
-    hour: Optional[int]
-    day_of_week: Optional[int]
-    route_cluster: Optional[int]
-    ride_distance: Optional[float]
-    is_peak_hour: Optional[int]
-    is_weekend: Optional[int]
-    is_night: Optional[int]
-    hour_sin: Optional[float]
-    hour_cos: Optional[float]
-    day_sin: Optional[float]
-    day_cos: Optional[float]
-
-    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "user_id": "USR-123456",
+                "pickup_location": "Kali Anyar",
+                "drop_location": "Rawamangun",
+                "vehicle_type": "Car",
+                "distance_km": 39.29,
+                "demand_pressure": 600.0,
+                "rating_avg": 4.5
+            }
+        },
+        protected_namespaces=()
+    )
 
 
 class RideResponse(BaseModel):

@@ -114,6 +114,7 @@ services:
     restart: unless-stopped
 
   # Apache Airflow - Data Orchestration and Workflow Management
+  # Airflow database
   airflow-db:
     image: postgres:15-alpine
     container_name: taxi_trip_airflow_db
@@ -125,19 +126,42 @@ services:
       - airflow_db_data:/var/lib/postgresql/data
     networks:
       - taxi_trip_network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${AIRFLOW_DB_USER}", "-d", "${AIRFLOW_DB_NAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
+  # Airflow webserver UI
   airflow-webserver:
     build:
       context: ./backend/airflow
       dockerfile: Dockerfile  
     container_name: taxi_trip_airflow_webserver
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
     environment:
-      AIRFLOW__CORE__DAGS_FOLDER: /app/airflow/dags
-      AIRFLOW__CORE__PLUGINS_FOLDER: /app/airflow/plugins
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@${AIRFLOW_DB_HOST}:${AIRFLOW_DB_PORT}/${AIRFLOW_DB_NAME}
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__MAX_MAP_LENGTH: 2048
+      AIRFLOW__CORE__PARALLELISM: 4
+      AIRFLOW__CORE__DAG_CONCURRENCY: 4
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 1
+      AIRFLOW__SCHEDULER__MAX_THREADS: 2
+      AIRFLOW__SCHEDULER__MAX_DAGRUNS_TO_PARSE_PER_LOOP: 100
+      AIRFLOW_CONN_SUPABASE_DEFAULT: ${AIRFLOW_CONN_SUPABASE_DEFAULT}
+      GUNICORN_CMD_ARGS: "--workers 2 --worker-class sync --max-requests 1000 --max-requests-jitter 50 --timeout 60"
       # Supabase credentials
       SUPABASE_HOST: ${SUPABASE_HOST}
       SUPABASE_PORT: ${SUPABASE_PORT}
@@ -149,13 +173,74 @@ services:
       DATABRICKS_HTTP_PATH: ${DATABRICKS_HTTP_PATH}
       DATABRICKS_TOKEN: ${DATABRICKS_TOKEN}
     volumes:
-      - ./backend/airflow:/app/airflow
-      - ./backend/airflow/dags:/app/airflow/dags
-      - ./backend/airflow/plugins:/app/airflow/plugins
-      - ./backend/airflow/logs:/app/airflow/logs
-    command: airflow scheduler
+      - ./backend/airflow/dags:/opt/airflow/dags
+      - ./backend/airflow/plugins:/opt/airflow/plugins
+      - ./backend/airflow/config:/opt/airflow/config
+      - airflow_logs_volume:/opt/airflow/logs
+    ports:
+      - "8080:8080"
+    command: bash -c "airflow db migrate && airflow webserver"
     depends_on:
-      - airflow-db
+      airflow-db:
+        condition: service_healthy
+    networks:
+      - taxi_trip_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Airflow scheduler
+  airflow-scheduler:
+    build:
+      context: ./backend/airflow
+      dockerfile: Dockerfile
+    container_name: taxi_trip_airflow_scheduler
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    environment:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@${AIRFLOW_DB_HOST}:${AIRFLOW_DB_PORT}/${AIRFLOW_DB_NAME}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__MAX_MAP_LENGTH: 2048
+      AIRFLOW__CORE__PARALLELISM: 2
+      AIRFLOW__SCHEDULER__MAX_THREADS: 1
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 300
+      AIRFLOW__SCHEDULER__PROCESSOR_POLL_INTERVAL: 1
+      AIRFLOW_CONN_SUPABASE_DEFAULT: ${AIRFLOW_CONN_SUPABASE_DEFAULT}
+      # Supabase credentials
+      SUPABASE_HOST: ${SUPABASE_HOST}
+      SUPABASE_PORT: ${SUPABASE_PORT}
+      SUPABASE_DB: ${SUPABASE_DB}
+      SUPABASE_USER: ${SUPABASE_USER}
+      SUPABASE_PASSWORD: ${SUPABASE_PASSWORD}
+      # Databricks credentials
+      DATABRICKS_HOST: ${DATABRICKS_HOST}
+      DATABRICKS_HTTP_PATH: ${DATABRICKS_HTTP_PATH}
+      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN}
+    volumes:
+      - ./backend/airflow/dags:/opt/airflow/dags
+      - ./backend/airflow/plugins:/opt/airflow/plugins
+      - ./backend/airflow/config:/opt/airflow/config
+      - airflow_logs_volume:/opt/airflow/logs
+    command: bash -c "airflow db migrate && airflow scheduler"
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-webserver:
+        condition: service_healthy
     networks:
       - taxi_trip_network
     restart: unless-stopped
@@ -223,6 +308,7 @@ volumes:
   prometheus_data:
   grafana_data:
   airflow_db_data:
+  airflow_logs_volume:
   zookeeper_data:
   kafka_data:
 

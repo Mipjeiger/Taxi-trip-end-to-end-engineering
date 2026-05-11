@@ -20,7 +20,7 @@ from app.api.dependencies import get_ml_predictor
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.post("/create", response_model=RideResponse)
+@router.post("/request", response_model=RideResponse)
 async def create_ride_with_prediction(
     request: RideCreationRequest,
     db: AsyncSession = Depends(get_db),
@@ -35,7 +35,7 @@ async def create_ride_with_prediction(
     3. Return ride with vehicle arrival timestamp
     """
     try:
-        booking_datetime = datetime.utcnow()
+        booking_datetime = datetime.now()
         
         # Get ML predictions
         prediction = await ml_predictor.predict_ride_metrics(

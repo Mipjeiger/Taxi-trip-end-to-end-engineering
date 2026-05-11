@@ -133,6 +133,10 @@ class MLPredictor:
             raise RuntimeError("Models not loaded. Call load_models() first.")
         
         try:
+            # Pre-compute time-based features before extracting model features
+            is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
+            is_night = 1 if hour >= 22 or hour < 5 else 0
+
             # Extract and scale features
             features_df = await self._extract_features(
                 pickup, drop, vehicle_type, hour, day_of_week, distance_km
@@ -150,10 +154,10 @@ class MLPredictor:
             # Calculate price with database informed logic
             estimated_price = await self._calculate_price(
                 distance_km=distance_km,
-                total_time=total_time,
+                time_min=total_time,
                 vehicle_type=vehicle_type,
-                is_peak_hour=features_df['is_peak_hour'].values[0],
-                is_night=features_df['is_night'].values[0],
+                is_peak_hour=is_peak_hour,
+                is_night=is_night,
                 demand_pressure=demand_pressure,
                 rating_avg=rating_avg
             )
@@ -182,7 +186,7 @@ class MLPredictor:
                 "vehicle_arrival_status": vehicle_arrival_status,
                 "price_per_km": round(estimated_price / distance_km, 2) if distance_km > 0 else 0,
                 "average_speed_kmh": round(distance_km / (total_time / 60), 2) if total_time > 0 else 0,
-                "is_peak_hour": bool(features_df['is_peak_hour'].values[0]),
+                "is_peak_hour": bool(is_peak_hour),
                 "demand_pressure": round(demand_pressure, 2),
                 "rating_avg": round(rating_avg, 2),
                 "model_confidence": "high" if not use_fallback else "medium"

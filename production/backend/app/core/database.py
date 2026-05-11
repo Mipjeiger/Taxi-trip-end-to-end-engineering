@@ -46,7 +46,6 @@ async def init_db():
     """Initialize the database connection and create tables."""
     from app.models.ride import Ride # Import models inside the function to register
 
-    # Raw asyncpg connection - completely bypasses SQLAIchemy's
     conn = await asyncpg.connect(
         host=settings.SUPABASE_HOST,
         port=settings.SUPABASE_PORT,
@@ -54,8 +53,8 @@ async def init_db():
         password=settings.SUPABASE_PASSWORD,
         database=settings.SUPABASE_DB,
         ssl=ssl_context,
-        statement_cache_size=0,
-    )
+        statement_cache_size=4
+    )   
     try:
         async with engine.begin() as sa_conn:
             await sa_conn.run_sync(Base.metadata.create_all)

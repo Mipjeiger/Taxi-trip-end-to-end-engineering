@@ -1,7 +1,8 @@
+# File: production/backend/airflow/requirements.txt
 apache-airflow-providers-postgres==6.5.1
-psycopg2-binary>==2.9.9
+psycopg2-binary==2.9.9
 pandas==2.1.4
-pyarrow==24.0.0
+pyarrow==14.0.1
 kafka-python==2.2.15
-databricks-sql-connector==4.2.6
+databricks-sql-connector==1.0.0
 SQLAlchemy==2.0.45

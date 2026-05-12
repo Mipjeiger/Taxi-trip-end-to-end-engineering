@@ -8,3 +8,4 @@ production/.env
 production/frontend/node_modules
 production/backend/notes.md
 production/backend/airflow/config/airflow.cfg
+production_2/frontend/node_modules

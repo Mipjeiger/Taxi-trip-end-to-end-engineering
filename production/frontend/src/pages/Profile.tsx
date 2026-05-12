@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { User, CreditCard, Shield, Bell, ChevronRight, Edit3, Star, LogOut, ChevronDown } from 'lucide-react';
+import { User, CreditCard, Shield, Bell, ChevronRight, Edit3, Star, LogOut } from 'lucide-react';
+
+import gopayLogo from '../assets/images/gopay-logo-png_seeklogo-369813.png';
+import ovoLogo from '../assets/images/EUbePLEU0AIpder.jpg';
+import visaLogo from '../assets/images/visa-logo-visa-icon-free-free-vector.jpg';
+
 
 const payments = [
-  { id: 'gopay', label: 'GoPay', balance: 'Rp 245.000', icon: '💚' },
-  { id: 'ovo', label: 'OVO', balance: 'Rp 80.000', icon: '💜' },
-  { id: 'visa', label: 'Visa ···· 4242', balance: '', icon: '💳' },
+  { id: 'gopay', label: 'GoPay', balance: 'Rp 245.000', icon: gopayLogo },
+  { id: 'ovo', label: 'OVO', balance: 'Rp 80.000', icon: ovoLogo },
+  { id: 'visa', label: 'Visa ···· 4242', balance: '', icon: visaLogo },
 ];
 
 const settings = [
@@ -30,8 +35,8 @@ export const Profile: React.FC = () => {
               </button>
             </div>
             <div className="flex-1">
-              <h2 className="text-slate-800 text-xl font-black">Miftah Hadiyan</h2>
-              <p className="text-slate-400 text-sm">miftah@example.com</p>
+              <h2 className="text-slate-800 text-xl font-black">Mipjeiger</h2>
+              <p className="text-slate-400 text-sm">mipjeiger@gmail.com</p>
               <div className="flex items-center gap-3 mt-2">
                 <div className="flex items-center gap-1 text-amber-500 text-xs font-semibold"><Star size={11} fill="currentColor" />4.92</div>
                 <span className="text-slate-200">·</span>
@@ -65,7 +70,19 @@ export const Profile: React.FC = () => {
             {payments.map(pm => (
               <button key={pm.id} onClick={() => setActive(pm.id)}
                 className={`w-full flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all ${activePayment === pm.id ? 'border-blue-500 bg-blue-50/50' : 'border-transparent bg-slate-50 hover:bg-slate-100'}`}>
-                <span className="text-2xl">{pm.icon}</span>
+                <img
+                src={pm.icon}
+                alt={pm.label}
+                className='w-10 h-10 rounded-xl object-contain bg-white p-1'
+                style={{
+                  objectFit: 'contain',
+                  backgroundColor: '#f0f0f0',
+                  border: '2px solid red', // debug: remove after confirmed
+                  display: 'block',
+                }}
+                onError={(e) => console.log('Image failed to load:', pm.label, e)}
+                onLoad={() => console.log('Image loaded OK:', pm.label)}
+                /> {/* replace within icon logo */}
                 <div className="flex-1 text-left">
                   <p className="text-slate-700 text-sm font-semibold">{pm.label}</p>
                   {pm.balance && <p className="text-slate-400 text-xs">{pm.balance}</p>}

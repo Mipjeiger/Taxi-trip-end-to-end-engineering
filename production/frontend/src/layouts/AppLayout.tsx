@@ -52,8 +52,8 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
               <Car size={15} className="text-white" />
             </div>
             <div>
-              <span className="font-bold text-blue-900 text-base tracking-tight">RSI</span>
-              <span className="text-blue-600 font-bold text-base">AI</span>
+              <span className="font-bold text-blue-900 text-base tracking-tight">Trip</span>
+              <span className="text-blue-600 font-bold text-base">Service</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -128,10 +128,10 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
           {sidebarOpen && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="overflow-hidden">
               <div className="flex items-baseline gap-0.5">
-                <span className="font-bold text-lg text-white tracking-tight whitespace-nowrap">RSI</span>
-                <span className="font-bold text-lg text-sky-400 whitespace-nowrap">AI</span>
+                <span className="font-bold text-lg text-white tracking-tight whitespace-nowrap">Trip</span>
+                <span className="font-bold text-lg text-sky-400 whitespace-nowrap">Service</span>
               </div>
-              <p className="text-blue-300/60 text-[10px] whitespace-nowrap">Mobility Platform</p>
+              <p className="text-blue-300/60 text-[10px] whitespace-nowrap">Trip Service</p>
             </motion.div>
           )}
         </div>
@@ -189,7 +189,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
         <header className="flex items-center justify-between px-6 py-3.5 bg-white border-b border-slate-200 shadow-sm">
           <div>
             <h1 className="text-slate-800 font-bold text-base">{currentPage?.label || 'Dashboard'}</h1>
-            <p className="text-slate-400 text-xs">RSI AI Platform</p>
+            <p className="text-slate-400 text-xs">RSI ML Platform</p>
           </div>
           <div className="flex items-center gap-3">
             {/* WS Status */}

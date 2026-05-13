@@ -189,7 +189,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
         <header className="flex items-center justify-between px-6 py-3.5 bg-white border-b border-slate-200 shadow-sm">
           <div>
             <h1 className="text-slate-800 font-bold text-base">{currentPage?.label || 'Dashboard'}</h1>
-            <p className="text-slate-400 text-xs">RSI ML Platform</p>
+            <p className="text-slate-400 text-xs">Taxi Service Ride guide you safety ride</p>
           </div>
           <div className="flex items-center gap-3">
             {/* WS Status */}

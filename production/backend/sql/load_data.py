@@ -5,10 +5,21 @@ from pathlib import Path
 import psycopg2
 import pandas as pd
 import logging
+import time
 from datetime import datetime
 
-# get logger
+# Configure logging to show all levels
+logging.basicConfig(
+    level=logging.DEBUG,  # Changed from default
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Print to console
+        logging.FileHandler('load_data.log')  # Also save to file
+    ]
+)
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Load env configuration
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -28,16 +39,32 @@ SUPABASE_URL=os.getenv("SUPABASE_URL")
 SUPABASE_KEY=os.getenv("SUPABASE_KEY")
 SUPABASE_API_KEY=os.getenv("SUPABASE_API_KEY")
 
+# Get connection DB to postgresql
+def get_connection():
+    """Establish connection to Supabase postgresql"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(
+                host=SUPABASE_HOST,
+                port=SUPABASE_PORT,
+                user=SUPABASE_USER,
+                password=SUPABASE_PASSWORD,
+                dbname=SUPABASE_DB
+            )
+            logger.info("✅ Successfully connected to Supabase PostgreSQL")
+            return conn
+        except Exception as e:
+            logger.error(f"❌ Connection attempt {attempt + 1} failed: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(5)  # Wait before retrying
+            else:
+                raise
+
 # Integrate connection to psycopg2 for direct SQL operations through supabase connection parameters
 def db_connection():
     """Establish connection to Supabase PostgreSQL"""
-    conn = psycopg2.connect(
-        host=SUPABASE_HOST,
-        port=SUPABASE_PORT,
-        user=SUPABASE_USER,
-        password=SUPABASE_PASSWORD,
-        dbname=SUPABASE_DB
-    )
+    conn =get_connection()
     cur = conn.cursor()
     cur.execute("SELECT * FROM rides;")
     rows = cur.fetchall()
@@ -47,8 +74,95 @@ def db_connection():
     for row in rows:
         print(row)
         
-    # Close connection    cur.close()
-    conn.close()
+    return conn
+
+# Retrieve data from rides table in chunks with progress tracking
+def retrieve_data_by_chunks(chunk_size=100):
+    """Retrieve data from rides table in chunks with progress tracking"""
+    
+    print("\n📊 DEBUG: Starting retrieve_data_by_chunks function...")  # Use print for immediate output
+    
+    conn = None
+    cur = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        print("📊 DEBUG: Connection established for retrieval")
+        logger.info("📊 Starting data retrieval with chunks...")
+        
+        # Get total count
+        print("📊 DEBUG: Executing COUNT query...")
+        cur.execute("SELECT COUNT(*) FROM rides;")
+        total_rows = cur.fetchone()[0]
+        print(f"📊 DEBUG: Total rows = {total_rows}")
+        logger.info(f"Total rows in database: {total_rows}")
+        
+        if total_rows == 0:
+            print("⚠️  DEBUG: No rows in database")
+            logger.warning("No data to retrieve")
+            return [], 0
+        
+        # Calculate chunks
+        total_chunks = (total_rows // chunk_size) + (1 if total_rows % chunk_size > 0 else 0)
+        print(f"📊 DEBUG: Will retrieve {total_chunks} chunks")
+        logger.info(f"Will retrieve in {total_chunks} chunks of {chunk_size} rows")
+        
+        # Retrieve in chunks
+        offset = 0
+        all_data = []
+        retrieved_count = 0
+        
+        for chunk_num in range(total_chunks):
+            try:
+                query = f"""
+                    SELECT * FROM rides 
+                    ORDER BY id 
+                    LIMIT %s OFFSET %s
+                """
+                cur.execute(query, (chunk_size, offset))
+                chunk_data = cur.fetchall()
+                
+                if not chunk_data:
+                    print(f"⚠️  DEBUG: Chunk {chunk_num + 1} returned no data")
+                    break
+                
+                all_data.extend(chunk_data)
+                retrieved_count += len(chunk_data)
+                
+                progress_percent = (retrieved_count / total_rows) * 100
+                msg = f"✅ Chunk {chunk_num + 1}/{total_chunks}: {len(chunk_data)} rows | Total: {retrieved_count}/{total_rows} ({progress_percent:.1f}%)"
+                print(f"📊 {msg}")  # Print immediately
+                logger.info(msg)
+                
+                offset += chunk_size
+                
+            except Exception as e:
+                print(f"❌ ERROR in chunk {chunk_num + 1}: {str(e)}")
+                logger.error(f"Error retrieving chunk {chunk_num + 1}: {str(e)}")
+                continue
+        
+        print(f"\n✅ DEBUG: Retrieval complete - {retrieved_count} rows")
+        logger.info(f"✅ Data retrieval complete: {retrieved_count} total rows")
+        
+        return all_data, total_rows
+        
+    except Exception as e:
+        print(f"❌ DEBUG: Fatal error in retrieve_data_by_chunks: {str(e)}")
+        logger.error(f"Error during retrieval: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return [], 0
+    
+    finally:
+        try:
+            if cur:
+                cur.close()
+            if conn and not conn.closed:
+                conn.close()
+            print("📊 DEBUG: Connection closed")
+        except Exception as e:
+            print(f"⚠️  DEBUG: Error closing connection: {str(e)}")
 
 # Populate parquet data to supabase postgreSQL
 def transform_and_load_data():
@@ -127,6 +241,36 @@ def transform_and_load_data():
         'status': 'Unknown',
     })
 
+    # Truncate string columns to match database schema limits
+    string_length_limits = {
+        "status": 20,
+        "vehicle_type": 50,
+        "id": 100,
+        "user_id": 100,
+    }    
+
+    for col, max_length in string_length_limits.items():
+        try:
+            if col in df_selected.columns:
+                df_selected[col] = df_selected[col].astype(str).str[:max_length]
+                
+                # Log if truncation occurred
+                truncated = df_selected[col].str.len().max()
+                if truncated == max_length:
+                    logger.warning(f"Column '{col}' values truncated to {max_length} characters.")
+        # Getting debug if any error occurs during truncation
+        except Exception as e:
+            logger.error(f"Error inserting row {index}: {str(e)}")
+            logger.error(f"Row data length: {len(row_data)}, Expected: {len(columns)}")
+
+            # Log which columns have problematic values
+            for col_name, value in zip(columns, row_data):
+                if isinstance(value, str) and len(value) > 50:
+                    logger.error(f"Column '{col_name}': length={len(value)}, value='{value[:100]}'")
+
+            conn.rollback() # Rollback on error to avoid partial commits
+            continue
+
     # Check for missing values in critical columns before loading
     critical_cols = ['id', 'user_id', 'pickup_location', 'drop_location']
     if df_selected[critical_cols].isnull().any().any():
@@ -135,16 +279,24 @@ def transform_and_load_data():
 
     logger.info(f"Data prepared: {len(df_selected)} rows ready to insert.")
 
-    # Integrated: load database to supabase using psycopg2 connection
-    conn = psycopg2.connect(
-        host=SUPABASE_HOST,
-        port=SUPABASE_PORT,
-        user=SUPABASE_USER,
-        password=SUPABASE_PASSWORD,
-        dbname=SUPABASE_DB
-    )
+    # Get existing IDs from database FIRST
+    conn = db_connection() # Establish connection to Supabase PostgreSQL
     cur = conn.cursor()
-    logger.info("🚀 Starting data load to Supabase...")
+
+    logger.info("Fetching existing IDs from database to avoid duplicates...")
+    cur.execute("SELECT id FROM rides;")
+    existing_ids = set(row[0] for row in cur.fetchall())
+    logger.info(f"Found {len(existing_ids)} existing IDs in database.")
+
+    # Filter: only insert rows with NEW IDs
+    df_to_insert = df_selected[~df_selected['id'].isin(existing_ids)].copy()
+    logger.info(f"Filtered to insert {len(df_to_insert)} new rows.")
+
+    if len(df_to_insert) == 0:
+        logger.warning("No new rows to insert after filtering existing IDs. Exiting load process.")
+        cur.close()
+        conn.close()
+        return
 
     # Prepare insert statement with correct columns
     columns = list(df_selected.columns)
@@ -154,27 +306,110 @@ def transform_and_load_data():
         VALUES ({placeholders})
         """
     
-    # Loop through dataframe and insert data parquet into rows table
-    for index, row in df.iterrows():
-        try:
-            cur.execute(insert_query, tuple(row))
+    logger.info("🚀 Starting data load to Supabase...")
 
-        # Chunk every 100 rows to avoid memory issues until all rows are inserted
-            if index % 100 == 0:
+    # Define batch
+    batch_size = 500
+    sucessful_rows = 0
+    failed_rows = 0
+    
+    # Loop through dataframe and insert data parquet into rows table
+    for index, row in df_selected.iterrows():
+        try:
+            if conn.closed:
+                logger.warning("Connection closed, reopening...")
+                conn = db_connection()
+                cur = conn.cursor()
+
+            row_data = tuple(None if pd.isna(val) else val for val in row)
+            cur.execute(insert_query, row_data)
+            sucessful_rows += 1
+
+            if sucessful_rows % batch_size == 0:
                 conn.commit()
-                logger.info(f"Inserted {index} rows...")
+                logger.info(f"Inserted {sucessful_rows} rows...")
+
+        except psycopg2.OperationalError as e:
+            failed_rows += 1
+            logger.error(f"Connection error at row {index}: {str(e)}")
+            try:
+                conn.rollback()
+            except:
+                pass
+
+            try:
+                conn = db_connection()
+                cur = conn.cursor()
+                logger.info("Reconnected successfully.")
+            except Exception as reconnection_error:
+                logger.error(f"Failed to reconnect: {str(reconnection_error)}")
+                break
+
         except Exception as e:
+            failed_rows += 1
             logger.error(f"Error inserting row {index}: {str(e)}")
-            conn.rollback() # Rollback on error to avoid partial commits
+            try:
+                conn.rollback()
+            except:
+                pass
             continue
 
-    conn.commit()
-    logger.info(f"✅ Successfully loaded {len(df)} rows to Supabase.")
-    cur.close()
-    conn.close()
+    # Chunk every 100 rows to avoid memory issues until all rows are inserted
+        if index % 100 == 0:
+            conn.commit()
+            logger.info(f"Inserted {index} rows...")
+    
+    # Final commit connection
+    try:
+        conn.commit()
+        logger.info(f"✅ Successfully loaded {len(df_selected)} rows to Supabase.")
+    except:
+        logger.error("Final commit failed")
+    
+    logger.info(f"✅ Load complete - Successful: {sucessful_rows}, Failed: {failed_rows}")
+
+    try:
+        cur.close()
+        conn.close()
+        logger.info("Connection closed successfully.")
+    except:
+        logger.warning("Connection already closed or failed to close.")
     
 
 # Run connection check
 if __name__ == "__main__":
-    db_connection() # Check connection and fetch data from Supabase
-    transform_and_load_data() # Transform and load data from parquet to Supabase
+    import sys
+    
+    print("\n" + "="*70)
+    print("TAXI TRIP DATA PIPELINE - Starting")
+    print("="*70)
+    
+    try:
+        print("\n[1/3] Testing connection...")
+        conn = db_connection()
+        conn.close()
+        print("✅ Connection OK\n")
+        
+        print("[2/3] Loading data...")
+        transform_and_load_data()
+        print("✅ Data loading OK\n")
+        
+        print("[3/3] Retrieving data with progress...")
+        print("-" * 70)
+        data, total = retrieve_data_by_chunks(chunk_size=100)
+        print("-" * 70)
+        
+        print("\n" + "="*70)
+        print("PIPELINE SUMMARY")
+        print("="*70)
+        print(f"Total rows in database: {total}")
+        print(f"Retrieved rows: {len(data)}")
+        print(f"Success rate: {(len(data)/total*100):.1f}%" if total > 0 else "No data")
+        print("="*70)
+        print("✅ PIPELINE COMPLETED\n")
+        
+    except Exception as e:
+        print(f"\n❌ PIPELINE FAILED: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

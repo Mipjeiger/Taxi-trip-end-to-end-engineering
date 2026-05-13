@@ -97,10 +97,7 @@ def validate_rides_data(**context):
         'null_values': df.isnull().sum().astype(int).to_dict(),
         'duplicate_rows': int(len(df[df.duplicated(subset=['id'])])),
         'price_null': int(df['price'].isnull().sum()),
-        'valid_status': int(df['status'].isin([
-            'Pending', 'Completed', 'Cancelled by Driver',
-            'No Driver Found', 'Cancelled by Customer', 'Incomplete'
-        ]).sum()),
+        'valid_status': int(df['status'].isin([...]).sum()),
         'date_range': {
             'earliest': str(df['created_at'].min()),
             'latest': str(df['created_at'].max())
@@ -161,8 +158,8 @@ def load_to_databricks(**context):
     Mode: APPEND (adds to existing data)"""
     # Pull transformed data file path from Xcom
     transformed_file = context['task_instance'].xcom_pull(
-        task_ids='transform_data_task',
-        key='transformed_file'
+        task_ids='transform_task',
+        key='transformed_data_file'
     )
     df = pd.read_parquet(transformed_file)
 
@@ -213,7 +210,7 @@ def generate_summary_report(**context):
     """
     Generate final report of ingestion data"""
     validation = context['task_instance'].xcom_pull(
-        task_ids='validate_data_task',
+        task_ids='validate_task',
         key='validation_results'
     )
     

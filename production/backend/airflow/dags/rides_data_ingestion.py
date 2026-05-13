@@ -93,14 +93,14 @@ def validate_rides_data(**context):
 
     # Validation checks
     validation = {
-        'total_rows': len(df),
-        'null_values': df.isnull().sum().to_dict(),
-        'duplicate_rows': len(df[df.duplicated(subset=['id'])]),
-        'price_null': df['price'].isnull().sum(),
-        'valid_status': df['status'].isin([
+        'total_rows': int(len(df)),
+        'null_values': df.isnull().sum().astype(int).to_dict(),
+        'duplicate_rows': int(len(df[df.duplicated(subset=['id'])])),
+        'price_null': int(df['price'].isnull().sum()),
+        'valid_status': int(df['status'].isin([
             'Pending', 'Completed', 'Cancelled by Driver',
             'No Driver Found', 'Cancelled by Customer', 'Incomplete'
-        ]).sum(),
+        ]).sum()),
         'date_range': {
             'earliest': str(df['created_at'].min()),
             'latest': str(df['created_at'].max())

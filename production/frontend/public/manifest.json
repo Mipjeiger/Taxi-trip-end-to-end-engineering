@@ -1,6 +1,6 @@
 {
-  "name": "Taxi Trip - ML-Powered Ride Sharing",
-  "short_name": "Taxi Trip",
+  "name": "Ride System Intelligence (RSI)",
+  "short_name": "RSI",
   "description": "Book your ride with AI-optimized pricing and routing",
   "start_url": "/",
   "scope": "/",

@@ -11,35 +11,83 @@ class LLMService:
     """LLM service for chatbot, route recommendation, and natural language booking services."""
 
     def __init__(self):
-        self.provider = settings.LLM_PROVIDER
+        self.provider = settings.LLM_PROVIDER or "groq"
         self.groq_api_key = settings.GROQ_API_KEY
-        self.model = settings.LLM_MODEL
+        self.model = settings.LLM_MODEL or "llama-3.1-8b-instant"
         self.base_url = settings.LLM_BASE_URL or "https://api.groq.com/openai/v1"
 
+        # Verify configuration
+        if not self.groq_api_key:
+            logger.error("❌ GROQ_API_KEY is not set in environment variables. LLMService will not work.")
+        if not self.provider:
+            logger.error("❌ LLM_PROVIDER is not set in environment variables. Defaulting to 'groq'.")
+
+    # Create groq as primary LLM provider, with abstraction for future providers
     async def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
-        """Generic chat method to interact with the LLM."""
-        if self.provider == "groq":
-            return await self._groq_chat(messages, temperature)
+        """Generate chat response from LLM"""
+    # Validate all messages have required fields before making API call
+        for i, msg in enumerate(messages):
+            if "role" not in msg or not msg["role"]:
+                raise ValueError(f"Message {i} is missing 'role' field.")
+            if "content" not in msg or not msg["content"] or not msg["content"].strip():
+                raise ValueError(f"Message {i} has empty 'content' field.")
+            if msg["role"] not in ["user", "assistant", "system"]:
+                raise ValueError(f"Message {i} has invalid 'role': {msg['role']}.")
+        logger.info(f"✅ Validated {len(messages)} messages for LLM chat request.")
+
+        if not self.provider or self.provider == "groq":
+            return await self._groq_chat(messages=messages, temperature=temperature)
         else:
-            return await self._local_chat(messages, temperature)
+            raise NotImplementedError(f"LLM provider {self.provider} not implemented.")
         
     async def _groq_chat(self, messages: List[Dict[str, str]], temperature: float) -> str:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization":f"Bearer {self.groq_api_key}"},
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": 600,
-                }
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
-        
-        async def _local_chat(self, messages: List[Dict[str, str]], temperature: float) -> str:
-            return "Local LLM not implemented yet."
+        """Call Groq API with error handling."""
+        try:
+            if not self.groq_api_key:
+                raise ValueError("GROQ_API_KEY is not configured.")
+            if not messages:
+                raise ValueError("Messages cannot be empty.")
+            
+            logger.info(f"📥 Sending request to Groq API with model: {self.model}")
+            logger.debug(f"Messages: {messages}")
+    
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.groq_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": max(0, min(temperature, 2)),  # Ensure temperature is between 0 and 2
+                        "max_tokens": 400,
+                    },
+                    follow_redirects=True
+                )
+                logger.info(f"📤 Received response from Groq API with status code: {response.status_code}")
+
+                if response.status_code != 200:
+                    error_text = response.text
+                    logger.error(f"❌ Groq API error: {response.status_code}: {error_text}")
+                    raise httpx.HTTPStatusError(
+                        f"Groq API returned {response.status_code}: {error_text}",
+                        request=response.request,
+                        response=response
+                    )
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                logger.info(f"✅ Successfully got response from Groq API.")
+                return content
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"❌ HTTP error calling Groq API: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error during Groq chat: {type(e).__name__}: {str(e)}")
+            raise
+                
         
         async def recommend_routes(self, user_query: str, context: Dict = None) -> Dict:
             """Recommend routes based on natural language query."""

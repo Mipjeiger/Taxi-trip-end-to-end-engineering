@@ -50,7 +50,8 @@
     - API integration based on database postgresql connection
         - Driver tracking for ride history
         ![alt text](images/261D920B-A831-4C0D-9444-951490A0C8B6.png)
-        - 
+        - LLM Chat answering question about routes in Jakarta
+        ![alt text](images/1404721F-4232-43EF-90D0-04BE2E42F221.png)
     - Airflow for orchestration data ingesting    
         - SQL data ingestion by airflow monitoring in server
         ![alt text](images/416DC5F1-A4A6-4C1E-9676-6EF10812CC93.png)

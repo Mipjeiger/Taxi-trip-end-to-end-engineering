@@ -81,7 +81,7 @@ export const Home: React.FC = () => {
         {/* Greeting overlay */}
         <div className="absolute top-5 left-4 md:left-8">
           <p className="text-blue-200 text-sm">{greeting} 👋</p>
-          <h2 className="text-white font-bold text-2xl mt-0.5">Miftah</h2>
+          <h2 className="text-white font-bold text-2xl mt-0.5">Mip</h2>
         </div>
 
         {/* Drivers nearby pill */}

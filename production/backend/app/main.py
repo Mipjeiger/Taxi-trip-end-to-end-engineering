@@ -19,6 +19,7 @@ from app.api.dependencies import (
     set_churn_recommender, set_matching_recommender
 )
 from app.core.redis_client import get_redis
+from app.startup import initialize_mlflow
 
 # Prometheus metrics
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY
@@ -81,6 +82,11 @@ async def lifespan(app: FastAPI):
         # Initialize database to ensure connectivity
         await init_db()
         logger.info("Database initialized successfully.")
+
+        # Initialize MLflow and log existing models
+        logger.info("Initializing MLflow and logging existing models...")
+        initialize_mlflow()
+        logger.info("✅ MLflow initialization complete.")
 
         # Load ML models
         ml_predictor = MLPredictor()

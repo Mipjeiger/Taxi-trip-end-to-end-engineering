@@ -17,6 +17,49 @@ services:
     networks:
       - taxi_trip_network
 
+  # RedisInsight for UI redis
+  redisinsight:
+    image: redislabs/redisinsight:latest
+    container_name: taxi_trip_redisinsight
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_HOST=local:redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - redisinsight_data:/db
+    networks:
+      - taxi_trip_network
+    restart: unless-stopped
+
+  # MLflow for experiment tracking and model management
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: taxi_trip_mlflow
+    ports:
+      - "5005:5005"
+    volumes:
+      - mlflow_data:/mlflow
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=${MLFLOW_BACKEND_STORE_URI}
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=${MLFLOW_DEFAULT_ARTIFACT_ROOT}
+    command: >
+      mlflow server
+      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI}
+      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT}
+      --host 0.0.0.0
+      --port 5005
+    networks:
+      - taxi_trip_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # Backend FastAPI service
   backend:
     build:
@@ -305,6 +348,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  redisinsight_data:
+  mlflow_data:
   prometheus_data:
   grafana_data:
   airflow_db_data:

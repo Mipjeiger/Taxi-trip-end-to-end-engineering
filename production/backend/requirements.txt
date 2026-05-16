@@ -20,6 +20,9 @@ psycopg2-binary==2.9.11
 redis==4.6.0
 websockets==15.0.1
 
+# MLflow for Experiment Tracking
+mlflow==2.10.2
+
 # ML & Data Processing (Critical for your models)
 numpy==1.26.4
 pandas==2.1.3

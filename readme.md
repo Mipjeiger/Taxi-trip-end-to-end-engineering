@@ -267,128 +267,132 @@
     Model v13 promoted to Production
 
 - Step 9 — FastAPI Loads Approved Production Model
-FastAPI
-After MLflow approves the model, FastAPI uses it for live inference.
-This is the production prediction stage.
-What Happens
-FastAPI:
-loads approved ML model
-receives prediction request
-generates ETA prediction
-Example Plaintext
-[FastAPI Production Inference]
+    FastAPI
+    After MLflow approves the model, FastAPI uses it for live inference.
+    This is the production prediction stage.
+    What Happens
+    FastAPI:
+    loads approved ML model
+    receives prediction request
+    generates ETA prediction
+    Example Plaintext
+    [FastAPI Production Inference]
 
-Production model loaded:
-eta_model_v13
+    Production model loaded:
+    eta_model_v13
 
-Prediction request:
-Airport → Hotel
+    Prediction request:
+    Airport → Hotel
 
-Predicted ETA:
-12 minutes
-Step 10 — Evidently AI (ML Monitoring)
-Evidently AI
-Evidently monitors production ML quality.
-Real-world conditions constantly change.
-What Happens
-Evidently checks:
-feature drift
-target drift
-prediction instability
-It compares:
-training data
-vs
-live production data
-Example Plaintext
-[Evidently AI]
+    Predicted ETA:
+    12 minutes
 
-Drift detected:
-average_trip_duration changed
+- Step 10 — Evidently AI (ML Monitoring)
+    Evidently AI
+    Evidently monitors production ML quality.
+    Real-world conditions constantly change.
+    What Happens
+    Evidently checks:
+    feature drift
+    target drift
+    prediction instability
+    It compares:
+    training data
+    vs
+    live production data
+    Example Plaintext
+    [Evidently AI]
 
-Training:
-15 minutes
+    Drift detected:
+    average_trip_duration changed
 
-Production:
-26 minutes
+    Training:
+    15 minutes
 
-Alert:
-Model quality degrading
-Step 11 — Prometheus (Metrics Collection)
-Prometheus
-Prometheus continuously collects operational metrics.
-It monitors system health.
-What Happens
-Prometheus measures:
-API latency
-CPU usage
-memory usage
-Kafka lag
-prediction latency
-Example Plaintext
-[Prometheus]
+    Production:
+    26 minutes
 
-Metrics collected:
-API latency = 220ms
-CPU usage = 68%
-Prediction latency = 45ms
-Kafka lag = 0
-Step 12 — Grafana (Visualization Dashboard)
-Grafana
-Grafana visualizes metrics into dashboards.
-Engineers monitor the entire system visually.
-What Happens
-Grafana displays:
-ride requests
-active drivers
-API latency
-ML metrics
-drift alerts
-infrastructure health
-Example Plaintext
-[Grafana Dashboard]
+    Alert:
+    Model quality degrading
 
-System Status:
-✔ API Healthy
-✔ Kafka Stable
-✔ Redis Healthy
-⚠ Drift Alert Detected
-✔ Database Operational
+- Step 11 — Prometheus (Metrics Collection)
+    Prometheus
+    Prometheus continuously collects operational metrics.
+    It monitors system health.
+    What Happens
+    Prometheus measures:
+    API latency
+    CPU usage
+    memory usage
+    Kafka lag
+    prediction latency
+    Example Plaintext
+    [Prometheus]
 
-Current Requests:
-2,300 rides/minute
-Complete End-to-End System Flow
-Frontend
-→ User books ride
+    Metrics collected:
+    API latency = 220ms
+    CPU usage = 68%
+    Prediction latency = 45ms
+    Kafka lag = 0
 
-FastAPI
-→ validates request
+- Step 12 — Grafana (Visualization Dashboard)
+    Grafana
+    Grafana visualizes metrics into dashboards.
+    Engineers monitor the entire system visually.
+    What Happens
+    Grafana displays:
+    ride requests
+    active drivers
+    API latency
+    ML metrics
+    drift alerts
+    infrastructure health
+    Example Plaintext
+    [Grafana Dashboard]
 
-PostgreSQL
-→ stores trip transaction
+    System Status:
+    ✔ API Healthy
+    ✔ Kafka Stable
+    ✔ Redis Healthy
+    ⚠ Drift Alert Detected
+    ✔ Database Operational
 
-Redis
-→ retrieves nearby drivers
+    Current Requests:
+    2,300 rides/minute
+    Complete End-to-End System Flow
+    Frontend
+    → User books ride
 
-Kafka
-→ streams ride event
+------------------------------------------------------------
+- FastAPI
+    → validates request
 
-Databricks
-→ processes large-scale trip data
+- PostgreSQL
+    → stores trip transaction
 
-Airflow
-→ automates retraining pipeline
+- Redis
+    → retrieves nearby drivers
 
-MLflow
-→ manages model versions
+- Kafka
+    → streams ride event
 
-FastAPI
-→ serves approved production model
+- Databricks
+    → processes large-scale trip data
 
-Evidently AI
-→ monitors ML quality
+- Airflow
+    → automates retraining pipeline
 
-Prometheus
-→ collects infrastructure metrics
+- MLflow
+    → manages model versions
 
-Grafana
-→ visualizes system health
+- FastAPI
+    → serves approved production model
+
+- Evidently AI
+    → monitors ML quality
+
+- Prometheus
+    → collects infrastructure metrics
+
+- Grafana
+    → visualizes system health

@@ -77,7 +77,7 @@ def db_connection():
     return conn
 
 # Retrieve data from rides table in chunks with progress tracking
-def retrieve_data_by_chunks(chunk_size=100):
+def retrieve_data_by_chunks(chunk_size=100, max_rows=15000):
     """Retrieve data from rides table in chunks with progress tracking"""
     
     print("\n📊 DEBUG: Starting retrieve_data_by_chunks function...")  # Use print for immediate output
@@ -94,17 +94,24 @@ def retrieve_data_by_chunks(chunk_size=100):
         # Get total count
         print("📊 DEBUG: Executing COUNT query...")
         cur.execute("SELECT COUNT(*) FROM rides;")
-        total_rows = cur.fetchone()[0]
-        print(f"📊 DEBUG: Total rows = {total_rows}")
-        logger.info(f"Total rows in database: {total_rows}")
+        total_rows_in_db = cur.fetchone()[0]
+        print(f"📊 DEBUG: Total rows = {total_rows_in_db}")
+        logger.info(f"Total rows in database: {total_rows_in_db}")
+
+        # Use the samller of max_rows or total_rows_in_db
+        total_rows_to_retrieve = min(max_rows, total_rows_in_db)
+        print(f"📊 DEBUG: Will retrieve up to {total_rows_to_retrieve}")
+        logger.info(f"Will retrieve up to {total_rows_to_retrieve} rows")
+        logger.info(f"Retrieving limited to: {total_rows_to_retrieve} rows")
+
         
-        if total_rows == 0:
+        if total_rows_to_retrieve == 0:
             print("⚠️  DEBUG: No rows in database")
             logger.warning("No data to retrieve")
             return [], 0
         
         # Calculate chunks
-        total_chunks = (total_rows // chunk_size) + (1 if total_rows % chunk_size > 0 else 0)
+        total_chunks = (total_rows_to_retrieve // chunk_size) + (1 if total_rows_to_retrieve % chunk_size > 0 else 0)
         print(f"📊 DEBUG: Will retrieve {total_chunks} chunks")
         logger.info(f"Will retrieve in {total_chunks} chunks of {chunk_size} rows")
         
@@ -114,13 +121,21 @@ def retrieve_data_by_chunks(chunk_size=100):
         retrieved_count = 0
         
         for chunk_num in range(total_chunks):
+            # Stop if reached max_rows
+            if retrieved_count >= total_rows_to_retrieve:
+                print(f"📊 DEBUG: Reached maximum rows limit ({total_rows_to_retrieve})")
+                break
+
             try:
+                # Adjust last chunk size if it exceeds max_rows
+                current_chunk_size = min(chunk_size, total_rows_to_retrieve - retrieved_count)
+
                 query = f"""
                     SELECT * FROM rides 
                     ORDER BY id 
                     LIMIT %s OFFSET %s
                 """
-                cur.execute(query, (chunk_size, offset))
+                cur.execute(query, (current_chunk_size, offset))
                 chunk_data = cur.fetchall()
                 
                 if not chunk_data:
@@ -130,8 +145,8 @@ def retrieve_data_by_chunks(chunk_size=100):
                 all_data.extend(chunk_data)
                 retrieved_count += len(chunk_data)
                 
-                progress_percent = (retrieved_count / total_rows) * 100
-                msg = f"✅ Chunk {chunk_num + 1}/{total_chunks}: {len(chunk_data)} rows | Total: {retrieved_count}/{total_rows} ({progress_percent:.1f}%)"
+                progress_percent = (retrieved_count / total_rows_to_retrieve) * 100
+                msg = f"✅ Chunk {chunk_num + 1}/{total_chunks}: {len(chunk_data)} rows | Total: {retrieved_count}/{total_rows_to_retrieve} ({progress_percent:.1f}%)"
                 print(f"📊 {msg}")  # Print immediately
                 logger.info(msg)
                 
@@ -145,7 +160,7 @@ def retrieve_data_by_chunks(chunk_size=100):
         print(f"\n✅ DEBUG: Retrieval complete - {retrieved_count} rows")
         logger.info(f"✅ Data retrieval complete: {retrieved_count} total rows")
         
-        return all_data, total_rows
+        return all_data, total_rows_to_retrieve
         
     except Exception as e:
         print(f"❌ DEBUG: Fatal error in retrieve_data_by_chunks: {str(e)}")
@@ -396,7 +411,7 @@ if __name__ == "__main__":
         
         print("[3/3] Retrieving data with progress...")
         print("-" * 70)
-        data, total = retrieve_data_by_chunks(chunk_size=100)
+        data, total = retrieve_data_by_chunks(chunk_size=100, max_rows=15000)
         print("-" * 70)
         
         print("\n" + "="*70)

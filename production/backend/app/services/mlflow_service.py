@@ -74,7 +74,6 @@ class MLflowService:
             ctat_models = self.model_loader.load_ctat_models()
             if ctat_models['best_model']:
                 self.log_model(ctat_models['best_model'], artifact_path="ctat/best_model")
-                self.log_params("/production/backend/models", artifact_path="ctat_results")
             self.end_run()
             print("✅ CTAT models logged successfully.")
 
@@ -83,7 +82,6 @@ class MLflowService:
             vtat_models = self.model_loader.load_vtat_models()
             if vtat_models['best_model']:
                 self.log_model(vtat_models['best_model'], artifact_path="vtat/best_model")
-                self.log_params("/production/backend/models", artifact_path="vtat_results")
             self.end_run()
             print("✅ VTAT models logged successfully.")
 
@@ -102,20 +100,16 @@ class MLflowService:
                 self.log_model(time_model, artifact_path="time_model")
             self.end_run()
             print("✅ Time model logged")
-            
-            # Log supporting files
-            self.start_experiment("Supporting_Files", "supporting_files_registration")
-            self.log_artifacts("./production/backend/models", artifact_path="supporting_files")
-            self.end_run()
-            print("✅ Supporting files logged")
+        
 
         except Exception as e:
-            print(f"❌ Error logging existing models: {e}")
+            print(f"❌ Error logging existing models: {str(e)}")
 
-    def end_run(self, status="FINISHED"):
-        """End MLFlow run"""
+    # Log artifacts method if missing
+    def log_artifacts(self, local_dir, artifact_path=None):
+        """Log artifacts to MLflow"""
         try:
-            mlflow.end_run(status=status)
-            print(f"✅ Mlflow run ended with status: {status}")
+            mlflow.log_artifacts(local_dir, artifact_path=artifact_path)
+            print(f"✅ Logged artifacts from {local_dir}")
         except Exception as e:
-            print(f"❌ Error ending MLflow run: {str(e)}")
+            print(f"❌ Error logging artifacts: {str(e)}")

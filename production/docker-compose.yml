@@ -43,14 +43,17 @@ services:
     volumes:
       - mlflow_data:/mlflow
     environment:
-      - MLFLOW_BACKEND_STORE_URI=${MLFLOW_BACKEND_STORE_URI}
-      - MLFLOW_DEFAULT_ARTIFACT_ROOT=${MLFLOW_DEFAULT_ARTIFACT_ROOT}
+      - MLFLOW_BACKEND_STORE_URI=file:///mlflow/tracking
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///mlflow/artifacts
+      - MLFLOW_TRACKING_INSECURE_TLS=true
+      - MLFLOW_ALLOW_INVALID_HOST=true
     command: >
       mlflow server
-      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI}
-      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT}
+      --backend-store-uri file:///mlflow/tracking
+      --default-artifact-root file:///mlflow/artifacts
       --host 0.0.0.0
       --port 5005
+      --app-name basic-auth
     networks:
       - taxi_trip_network
     restart: unless-stopped
@@ -115,7 +118,9 @@ services:
       - taxi_trip_network
     restart: unless-stopped
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
+      - REACT_APP_API_URL=${REACT_APP_API_URL}
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -299,8 +304,12 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
     networks:
       - taxi_trip_network
-    restart: unless-stopped
-
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: taxi_trip_kafka
@@ -310,7 +319,7 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://kafka:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -318,7 +327,11 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
     networks:
       - taxi_trip_network
     restart: unless-stopped
@@ -338,9 +351,10 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    ports:
+      - "8081:8080"
     depends_on:
       - kafka
-      - zookeeper
     networks:
       - taxi_trip_network
     restart: unless-stopped

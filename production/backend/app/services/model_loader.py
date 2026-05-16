@@ -6,8 +6,10 @@ from typing import Dict, Any
 
 class ModelLoader:
     """Utility class to load ML models from dir."""
-    def __init__(self, models_dir="./production/backend/models"):
+    def __init__(self, models_dir="/app/models"):
         self.models_dir = Path(models_dir)
+        if not self.models_dir.exists():
+            print(f"⚠️  Warning: Models directory {self.models_dir} does not exist. Please check the path.")
 
     # CTAT models
     def load_ctat_models(self) -> Dict[str, Any]:

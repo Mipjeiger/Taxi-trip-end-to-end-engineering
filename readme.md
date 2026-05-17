@@ -47,6 +47,8 @@
     ![alt text](images/B9152151-9813-4658-8E39-890D8DD6FD20.png)
     - Create Database on PostgreSQL by occuring with docker
     ![alt text](images/1B2D32D4-C853-4CB5-B274-4CEC66A1C106.png)
+    - Table rides as database in supabase
+    ![alt text](images/A979B95D-3C85-4A3A-81C4-5ECE895E115C.png)
     - API integration based on database postgresql connection
         - Driver tracking for ride history
         ![alt text](images/261D920B-A831-4C0D-9444-951490A0C8B6.png)

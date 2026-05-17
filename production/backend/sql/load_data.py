@@ -197,6 +197,7 @@ def transform_and_load_data():
         'estimated_pickup_time_minute': 'estimated_pickup_time_minute',
         'estimated_drop_time_minute': 'estimated_drop_time_minute',
         'status': 'Booking Status',
+        'avg_rating': 'avg_rating',
         'created_at': 'Datetime',
         'completed_at': 'completed_at',
         'pickup_encoded': 'Pickup Encoded',
@@ -230,6 +231,7 @@ def transform_and_load_data():
     df_selected['ride_distance'] = pd.to_numeric(df_selected['ride_distance'], errors='coerce')
     df_selected['estimated_pickup_time_minute'] = pd.to_numeric(df_selected['estimated_pickup_time_minute'], errors='coerce')
     df_selected['estimated_drop_time_minute'] = pd.to_numeric(df_selected['estimated_drop_time_minute'], errors='coerce')
+    df_selected['avg_rating'] = pd.to_numeric(df_selected['avg_rating'], errors='coerce')
 
     # Convert Datetime strings to proper timestamp
     df_selected['created_at'] = pd.to_datetime(df_selected['created_at'], errors='coerce')
@@ -243,7 +245,7 @@ def transform_and_load_data():
         df_selected[col] = pd.to_numeric(df_selected[col], errors='coerce').astype('Int64')
 
     # Float columns
-    float_columns = ['hour_sin', 'hour_cos', 'day_sin', 'day_cos']
+    float_columns = ['hour_sin', 'hour_cos', 'day_sin', 'day_cos', 'avg_rating']
     for col in float_columns:
         df_selected[col] = pd.to_numeric(df_selected[col], errors='coerce')
 
@@ -254,6 +256,7 @@ def transform_and_load_data():
         'estimated_pickup_time_minute': 0.0,
         'estimated_drop_time_minute': 0.0,
         'status': 'Unknown',
+        'avg_rating': float(df_selected['avg_rating'].mean()) if not df_selected['avg_rating'].isnull().all() else 0.0
     })
 
     # Truncate string columns to match database schema limits

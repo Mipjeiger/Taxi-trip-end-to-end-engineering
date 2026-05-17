@@ -1,17 +1,20 @@
-FROM python:3.11-slim
+from python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies with retry logic
+# Install system dependencies including OpenMP for XGBoost/LightGBM
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
     postgresql-client \
+    curl \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# Copy wheels from the builder stage
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+
+# Install Python dependencies from wheels
+RUN pip install --no-cache-dir -r requirements.txt \
+    && rm -rf /root/.cache/pip
 
 # Copy the application code
 COPY . .

@@ -2,50 +2,41 @@
 frontend/
 node_modules/
 
-# Backend models (mount as volume instead)
-backend/models/*.pkl
-backend/models/*.keras
-backend/models/*.h5
-
-# Python
+# production/backend/.dockerignore
 __pycache__/
 *.pyc
-.venv/
-venv/
+*.pyo
+*.pyd
+.Python
 env/
-
-# IDE
-.vscode/
-.idea/
-
-# Git
-.git/
+venv/
+.venv
+.git
 .gitignore
-
-# Docker
-docker-compose*.yml
-Dockerfile*
-
-# Environment
+.dockerignore
 .env
-.env.*
-!.env.example
-
-# Data
-*.db
-*.sqlite
-data/
-*.csv
-*.parquet
-
-# Logs
-logs/
+.env.local
 *.log
-
-# Documentation
-README.md
-docs/
-
-# OS files
+logs/
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
 .DS_Store
-Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.mypy_cache/
+
+# REMOVE PYCACHE FROM MODELS
+models/__pycache__/
+
+# BUT KEEP MODEL FILES
+# Don't add: models/*.keras
+# Don't add: models/*.h5
+# Don't add: models/*.pb

@@ -1,3 +1,4 @@
+import pickle
 import mlflow
 import os
 from pathlib import Path
@@ -11,10 +12,36 @@ ENV_PATH = BASE_DIR / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
 class MLflowService:
-    def __init__(self, tracking_uri="http://localhost:5005"):
+    def __init__(self, tracking_uri=os.getenv("MLFLOW_TRACKING_URI"), models_dir="/app/models"):
         self.tracking_uri = tracking_uri
+        self.models_dir = Path(models_dir)
         mlflow.set_tracking_uri(tracking_uri)
         self.model_loader = ModelLoader()
+
+        # Debug print actual directory contents
+        print(f"🔍 Checking models directory: {self.models_dir}")
+        print(f"📂 Directory exists: {self.models_dir.exists()}")
+
+        if self.models_dir.exists():
+            files = list(self.models_dir.glob("*"))
+            print(f"📂 Files in directory: {files}")
+        else:
+            print(f"❌ Models directory does not exist: {self.models_dir}")
+
+    def _load_pickle(self, filename: str):
+        """Load pickle file with error handling"""
+        file_path = self.models_dir / filename
+        try:
+            if file_path.exists():
+                with open(file_path, "rb") as f:
+                    return pickle.load(f)
+            else:
+                print(f"❌ File not found: {file_path}")
+                return None
+        except Exception as e:
+            print(f"❌ Error loading pickle file {file_path}: {e}")
+            return None
+            
 
     def start_experiment(self, experiment_name, run_name=None):
         """Start MLFlow experiment run"""

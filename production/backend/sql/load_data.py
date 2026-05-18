@@ -209,6 +209,10 @@ def transform_and_load_data():
         'is_peak_hour': 'is_peak_hour',
         'is_weekend': 'is_weekend',
         'is_night': 'is_night',
+        'pickup_lat': 'pickup_lat',
+        'pickup_lon': 'pickup_lon',
+        'drop_lat': 'drop_lat',
+        'drop_lon': 'drop_lon',
         'hour_sin': 'hour_sin',
         'hour_cos': 'hour_cos',
         'day_sin': 'day_sin',
@@ -245,7 +249,7 @@ def transform_and_load_data():
         df_selected[col] = pd.to_numeric(df_selected[col], errors='coerce').astype('Int64')
 
     # Float columns
-    float_columns = ['hour_sin', 'hour_cos', 'day_sin', 'day_cos', 'avg_rating']
+    float_columns = ['hour_sin', 'hour_cos', 'day_sin', 'day_cos', 'avg_rating', 'pickup_lat', 'pickup_lon', 'drop_lat', 'drop_lon']
     for col in float_columns:
         df_selected[col] = pd.to_numeric(df_selected[col], errors='coerce')
 

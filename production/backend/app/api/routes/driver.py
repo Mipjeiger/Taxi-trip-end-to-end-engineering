@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from app.services.matching_recommender import MatchingRecommender
 from app.api.dependencies import get_redis_client
 import redis.asyncio as redis
 from app.services.route_optimizer import RouteOptimizer
@@ -8,7 +7,7 @@ from app.services.route_optimizer import RouteOptimizer
 router = APIRouter()
 
 class DriverLocationUpdate(BaseModel):
-    driver_id: int
+    driver_id: str
     lat: float
     lng: float
     status: str # Online, Offline, on_trip
@@ -33,7 +32,7 @@ async def get_nearby_drivers(lat: float, lng: float, radius_km: float = 2.0, red
             continue
         
         try:
-           parts = data.split(",")
+           parts = data.decode().split(",") if isinstance(data, bytes) else data.split(",")
            driver_lat = float(parts[0])
            driver_lng = float(parts[1])
            status = parts[2].strip().lower()
@@ -47,7 +46,8 @@ async def get_nearby_drivers(lat: float, lng: float, radius_km: float = 2.0, red
         distance = RouteOptimizer.haversine(lat, lng, driver_lat, driver_lng)
 
         if distance <= radius_km:
-            driver_id = int(key.decode().split(":")[-1]) if isinstance(key, bytes) else int(key.split(":")[-1])
+            raw_key = key.decode() if isinstance(key, bytes) else key
+            driver_id = raw_key.split(":")[-1]
             nearby_drivers.append({
                 "driver_id": driver_id,
                 "lat": driver_lat,

@@ -12,7 +12,8 @@ from app.models.prediction import (
     RideCreationRequest,
     RideResponse,
     BookingStatus,
-    VehicleArrivalStatus
+    VehicleArrivalStatus,
+    DriverStatus
 )
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor

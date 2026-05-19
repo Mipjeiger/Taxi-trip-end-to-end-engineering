@@ -21,6 +21,11 @@ class VehicleArrivalStatus(str, Enum):
     COMING = "coming"                   # 15-30 min
     DELAYED = "delayed"                 # >= 30 min
 
+class DriverStatus(str, Enum):
+    """Driver status for real-time tracking"""
+    ONLINE = "online"
+    OFFLINE = "offline"
+
 class PredictionRequest(BaseModel):
     """ML prediction request with vehicle type validation"""
     pickup_location: str

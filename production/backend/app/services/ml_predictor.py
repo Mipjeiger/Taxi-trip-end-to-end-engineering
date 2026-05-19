@@ -168,6 +168,11 @@ class MLPredictor:
             # VTAT prediction to ensure the vehicle pickup time is reasonable
             vehicle_arrival_at = await self.predict_vehicle_arrival(booking_datetime, vtat_pred)
             vehicle_arrival_status = await self._calculate_vehicle_arrival_status(vtat_pred)
+
+            # Predict to get driver based on status -> TODO: define logic customer arrival status & driver status based on CTAT prediction and database insights
+            customer_arrival_at = await self.predict_completed_at(booking_datetime, total_time)
+            customer_arrival_status = await self._
+            
             
             # Return prediction into dictionary format
             return {
@@ -476,3 +481,10 @@ class MLPredictor:
         except Exception as e:
             logger.error(f"❌ Error predicting vehicle arrival time: {e}")
             return booking_datetime + timedelta(minutes=10)
+        
+    async def _calculate_customer_arrival_status(self, ctat_minutes: float) -> str:
+        """Determine customer arrival status based on CTAT prediction.
+
+        Args: 
+            formula: customer_arrival_status = CTAT : Ride Distance
+        """

@@ -1,15 +1,10 @@
 import logging
 import numpy as np
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
-from app.core.database import get_db
-from app.models.prediction import ( PredictionRequest, RidePredictionResponse, VehicleArrivalStatus )
+from app.models.prediction import ( PredictionRequest, RidePredictionResponse, VehicleArrivalStatus, DriverStatus )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

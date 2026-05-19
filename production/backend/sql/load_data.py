@@ -218,7 +218,8 @@ def transform_and_load_data():
         'hour_cos': 'hour_cos',
         'day_sin': 'day_sin',
         'day_cos': 'day_cos',
-        'vtat': 'Avg VTAT'
+        'vtat': 'Avg VTAT',
+        'ctat': 'Avg CTAT'
     }
 
     # Select only needed columns from parquet
@@ -241,7 +242,6 @@ def transform_and_load_data():
     # Convert Datetime strings to proper timestamp
     df_selected['created_at'] = pd.to_datetime(df_selected['created_at'], errors='coerce')
     df_selected['completed_at'] = pd.to_datetime(df_selected['completed_at'], errors='coerce')
-    df_selected['vtat'] = pd.to_datetime(df_selected['vtat'], errors='coerce')
 
     # Convert integer columns
     int_columns = ['hour', 'day_of_week', 'route_cluster', 'is_peak_hour', 'is_weekend', 'is_night',

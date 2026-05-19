@@ -23,6 +23,7 @@ async def update_driver_location(update: DriverLocationUpdate,
 async def get_nearby_drivers(lat: float, lng: float, radius_km: float = 2.0, redis_client: redis.Redis = Depends(get_redis_client)):
     """Get nearby drivers within a certain radius."""
    
+    # Logic to get nearby drivers: Redis keys are in the format to call API driver:loc
     nearby_drivers = []
     keys = await redis_client.keys("driver:loc:*")
 

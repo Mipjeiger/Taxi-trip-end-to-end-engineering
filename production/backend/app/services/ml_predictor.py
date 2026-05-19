@@ -5,6 +5,7 @@ from typing import Dict, Optional
 from pathlib import Path
 from tensorflow.keras.models import load_model
 from datetime import datetime, timedelta
+from app.core.config import DATABASE_PATH
 import logging
 
 logger = logging.getLogger(__name__)
@@ -482,9 +483,17 @@ class MLPredictor:
             logger.error(f"❌ Error predicting vehicle arrival time: {e}")
             return booking_datetime + timedelta(minutes=10)
         
-    async def _calculate_customer_arrival_status(self, ctat_minutes: float) -> str:
+    async def _calculate_customer_arrival_status(self, ctat_minutes: float, data: pd.DataFrame) -> str:
         """Determine customer arrival status based on CTAT prediction.
 
         Args: 
-            formula: customer_arrival_status = CTAT : Ride Distance
+            formula: customer_arrival_status = CTAT : Ride Distance ratio
+        returns:
+            str: Customer arrival status
         """
+        # Load database to get insight by Ride Distance
+        import pandas as pd
+        df = pd.read_parquet(DATABASE_PATH)
+
+        try:
+            ctat 

@@ -5,6 +5,8 @@ from typing import Dict, Optional
 from pathlib import Path
 from tensorflow.keras.models import load_model
 from datetime import datetime, timedelta
+from app.core.redis_client import redis_get, redis_set
+from app.core.database import get_supabase_connection
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,12 @@ class MLPredictor:
         └── model_price_improved.keras (TensorFlow - FALLBACK)
     """
     def __init__(self):
-        self.models_path = Path(__file__).parent.parent.parent / "models"
+        self.models_path = Path("/app/models")
+        if not self.models_path.exists():
+            # Fallback for local development
+            self.models_path = Path(__file__).parent.parent.parent / "models"
+        logger.info(f"Using models path: {self.models_path}")
+        
         self.models = {}
         self.scalers = {}
         self.encoders = {}
@@ -481,30 +488,109 @@ class MLPredictor:
         except Exception as e:
             logger.error(f"❌ Error predicting vehicle arrival time: {e}")
             return booking_datetime + timedelta(minutes=10)
-        
-    async def _calculate_customer_arrival_status(self, ctat_minutes: float) -> str:
+
+    async def _get_ride_distance(self, ride_id: str) -> float:
         """
-        Calculate customer arrival status based on _predict_ctat prediction function.
-        
-        Formula: predicted_customer_arrival/predicted_distance = Ride Distance x (Predicted CTAT / completed_at (known time))
-        
+        Fetch ride distance from  database with Redis cachhing.
+
         Args:
-            ctat_minutes: Predicted CTAT from model
-            completed_at: Known completion time from database
-            Ride Distance: Known distance from database
+            ride_id: The ride ID to fetch distance for
 
         Returns:
-            str: Customer arrival status 
-        Status levels:
-        - "arriving_soon": CTAT < 5 min (customer nearly at dropoff)
-        - "on_the_way": 5-15 min (customer on the way)
-        - "near_dropoff": 15-30 min (normal dropoff time)
-        - "late_arrival": >= 30 min (longer than expected)
+            float: Ride distance value or 0 if not found
+
+        Formula: predicted_customer_arrival = Ride Distance x (Predicted CTAT / completed_at (Known Time from Database))
         """
-        from production.backend.sql.load_data import get_supabase_client
-        from app.core.redis_client import redis_get, redis_set
-
-
+        conn = None
+        cur = None
         try:
+            # Try Redis cache first (async)
+            cached = await redis_get(f"ride_distance:{ride_id}")
+            if cached:
+                logger.debug(f"✅ Ride distance from Redis cache: {ride_id}")
+                return float(cached)
+            
+            # Get connection from database.py
+            conn = get_supabase_connection()
+            cur = conn.cursor()
+
+            # Query ride distance
+            query = "SELECT ride_distance FROM rides WHERE id = %s"
+            cur.execute(query, (ride_id))
+            result = cur.fetchone()
+
+            ride_distance = float(result[0]) if result and result[0] is not None else 0.0
+
+            # Cache for 1 hour (async)
+            if ride_distance > 0:
+                await redis_set(f"ride_distance:{ride_id}", str(ride_distance), expire=3600)
+            
+            logger.debug(f"✅ Fetched ride distance for {ride_id}: {ride_distance} km")
+            return ride_distance
+        
+        except Exception as e:
+            logger.error(f"❌ Error fetching ride distance for {ride_id}: {e}")
+            return 0.0
+        
+        finally:
+            try:
+                if cur:
+                    cur.close()
+                if conn and not conn.closed:
+                    conn.close()
+            except Exception as e:
+                logger.debug(f"Error closing database connection: {e}")
+
+    async def _calculate_customer_arrival_status(self, ctat_minutes: float, ride_id: str) -> str:
+        """
+        Calculate customer arrival status based on CTAT prediction and ride distance.
+        
+        Formula:
+            - Fetch ride_distance from database with Redis caching
+            - Compare predicted_ctat with expected arrival time based on distance
+
+        Args:
+        ctat_minutes: Predicted CTAT (Customer Time to Arrival) in minutes
+        ride_id: Ride ID to fetch distance from database
+        
+        Returns:
+            str: Customer arrival status
+            - "arriving_soon": CTAT < 5 min (customer nearly at dropoff)
+            - "on_the_way": 5-15 min (customer on the way)
+            - "near_dropoff": 15-30 min (normal dropoff time)
+            - "late_arrival": >= 30 min (longer than expected)
+            - "unknown": Error or invalid data
+            """
+        try:
+            # Validate and convert CTAT to float
             ctat = float(ctat_minutes)
-            ride_distance = 
+
+            # Fetch ride distance from database (with Redis caching)
+            ride_distance = await self._get_ride_distance(ride_id)
+
+            # If no valid distance, return unknown status
+            if ride_distance <= 0:
+                logger.warning(f"⚠️ Invalid ride distance for {ride_id}: {ride_distance} km, cannot calculate customer arrival status.")
+                return "unknown"
+            
+            # Calculate status based on CTAT thresholds
+            logger.debug(f"Calculating status - CTAT: {ctat} min, Ride Distance: {ride_distance} km")
+
+            if ctat < 5: 
+                status = "arriving_soon"
+            elif ctat < 15:
+                status = "on_the_way"
+            elif ctat < 30:
+                status = "near_dropoff"
+            else:
+                status = "late_arrival"
+
+            logger.debug(f"✅ Status calculated: {status} for ride {ride_id}")
+            return status
+        
+        except ValueError as e:
+            logger.error(f"❌ Invalid CTAT value: {ctat_minutes} - {e}")
+            return "unknown"
+        except Exception as e:
+            logger.error(f"❌ Error calculating customer arrival status for ride {ride_id}: {e}")
+            return "unknown"

@@ -6,6 +6,8 @@ from typing import AsyncGenerator
 import ssl
 import asyncpg
 import logging
+import time
+import psycopg2
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -73,3 +75,24 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+def get_supabase_connection():
+    """Get a psycopg2 connection to Supabase for raw SQL queries."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(
+                host=settings.SUPABASE_HOST,
+                port=settings.SUPABASE_PORT,
+                user=settings.SUPABASE_USER,
+                password=settings.SUPABASE_PASSWORD,
+                dbname=settings.SUPABASE_DB
+            )
+            return conn
+        
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"⚠️  Failed to connect to Supabase (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying...")
+                time.sleep(5)  # Wait before retrying
+            else:
+                raise

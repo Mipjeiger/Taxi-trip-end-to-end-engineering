@@ -26,6 +26,7 @@ class DriverStatus(str, Enum):
     ONLINE = "online"
     OFFLINE = "offline"
 
+
 class PredictionRequest(BaseModel):
     """ML prediction request with vehicle type validation"""
     pickup_location: str

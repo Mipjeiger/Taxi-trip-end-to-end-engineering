@@ -171,7 +171,7 @@ class MLPredictor:
 
             # Predict to get driver based on status -> TODO: define logic customer arrival status & driver status based on CTAT prediction and database insights
             customer_arrival_at = await self.predict_completed_at(booking_datetime, total_time)
-            customer_arrival_status = await self._
+            customer_arrival_status = await self._calculate_customer_arrival_status(ctat_pred)
             
             
             # Return prediction into dictionary format
@@ -283,7 +283,7 @@ class MLPredictor:
     async def _predict_ctat(self, features_df: pd.DataFrame, use_fallback: bool = False) -> float:
         """Predict CTAT using primary or fallback model."""
         try:
-            if not use_fallback and 'ctat_primary' in self.models:
+            if not use_fallback and 'ctat_primary' in self.models:  
                 # Use ML model are trained
                 features_scaled = self.scalers['ultra'].transform(features_df)
                 ctat = float(self.models['ctat_primary'].predict(features_scaled)[0])
@@ -482,17 +482,29 @@ class MLPredictor:
             logger.error(f"❌ Error predicting vehicle arrival time: {e}")
             return booking_datetime + timedelta(minutes=10)
         
-    async def _calculate_customer_arrival_status(self, ctat_minutes: float, data: pd.DataFrame) -> str:
-        """Determine customer arrival status based on CTAT prediction.
-
-        Args: 
-            formula: customer_arrival_status = CTAT : Ride Distance ratio
-        returns:
-            str: Customer arrival status
+    async def _calculate_customer_arrival_status(self, ctat_minutes: float) -> str:
         """
-        # Load database 
-        from supabase import create_client
+        Calculate customer arrival status based on _predict_ctat prediction function.
         
+        Formula: predicted_customer_arrival/predicted_distance = Ride Distance x (Predicted CTAT / completed_at (known time))
+        
+        Args:
+            ctat_minutes: Predicted CTAT from model
+            completed_at: Known completion time from database
+            Ride Distance: Known distance from database
+
+        Returns:
+            str: Customer arrival status 
+        Status levels:
+        - "arriving_soon": CTAT < 5 min (customer nearly at dropoff)
+        - "on_the_way": 5-15 min (customer on the way)
+        - "near_dropoff": 15-30 min (normal dropoff time)
+        - "late_arrival": >= 30 min (longer than expected)
+        """
+        from production.backend.sql.load_data import get_supabase_client
+        from app.core.redis_client import redis_get, redis_set
+
 
         try:
-            ctat 
+            ctat = float(ctat_minutes)
+            ride_distance = 

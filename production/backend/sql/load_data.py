@@ -1,4 +1,3 @@
-from supabase import create_client, Client
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -60,6 +59,22 @@ def get_connection():
                 time.sleep(5)  # Wait before retrying
             else:
                 raise
+
+# Get Supabase client for external imports
+def get_supabase_client():
+    """
+    Get a Supabase PostgreSQL connection for external modules.
+    Returns a psycopg2 connection object that can be used for queries.
+    
+    Usage:
+        conn = get_supabase_client()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM rides WHERE id = %s", (ride_id,))
+        result = cur.fetchone()
+        cur.close()
+    """
+    return get_connection()
+
 
 # Integrate connection to psycopg2 for direct SQL operations through supabase connection parameters
 def db_connection():
@@ -217,9 +232,7 @@ def transform_and_load_data():
         'hour_sin': 'hour_sin',
         'hour_cos': 'hour_cos',
         'day_sin': 'day_sin',
-        'day_cos': 'day_cos',
-        'vtat': 'Avg VTAT',
-        'ctat': 'Avg CTAT'
+        'day_cos': 'day_cos'
     }
 
     # Select only needed columns from parquet

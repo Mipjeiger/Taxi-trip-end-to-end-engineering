@@ -5,7 +5,6 @@ from typing import Dict, Optional
 from pathlib import Path
 from tensorflow.keras.models import load_model
 from datetime import datetime, timedelta
-from app.core.config import DATABASE_PATH
 import logging
 
 logger = logging.getLogger(__name__)
@@ -491,9 +490,9 @@ class MLPredictor:
         returns:
             str: Customer arrival status
         """
-        # Load database to get insight by Ride Distance
-        import pandas as pd
-        df = pd.read_parquet(DATABASE_PATH)
+        # Load database 
+        from supabase import create_client
+        
 
         try:
             ctat 

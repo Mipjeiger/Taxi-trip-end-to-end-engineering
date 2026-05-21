@@ -13,7 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 
 # Install Python dependencies from wheels
-RUN pip install --no-cache-dir -r requirements.txt \
+RUN pip install --no-cache-dir \
+    --default-timeout=1000 \
+    --retries 3 \
+    -r requirements.txt \
     && rm -rf /root/.cache/pip
 
 # Copy the application code

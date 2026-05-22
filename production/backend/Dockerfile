@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     curl \
     libgomp1 \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy wheels from the builder stage

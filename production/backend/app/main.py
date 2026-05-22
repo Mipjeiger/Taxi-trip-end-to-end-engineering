@@ -4,6 +4,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import logging
 import time
+import datetime
 from typing import Dict
 
 from app.api.routes import prediction, ride, driver, analytics, recommendations, llm
@@ -20,6 +21,7 @@ from app.api.dependencies import (
 )
 from app.core.redis_client import get_redis, close_redis
 from app.startup import initialize_mlflow
+from app.services.kafka_producer import kafka_producer
 
 # Prometheus metrics
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY
@@ -91,7 +93,7 @@ manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle management - startup and shutdown"""
-    global ml_predictor, vehicle_recommender, surge_recommender, churn_recommender, matching_recommender, redis_client
+    global ml_predictor, vehicle_recommender, surge_recommender, churn_recommender, matching_recommender, redis_client, kafka_producer
     
     # ========== STARTUP ==========
     logger.info("=" * 70)
@@ -109,16 +111,24 @@ async def lifespan(app: FastAPI):
         redis_client = await get_redis()
         logger.info("✅ Redis initialized successfully")
 
-        # Step 3: Initialize MLflow (non-blocking)
-        logger.info("[3/6] Initializing MLflow...")
+        # Step 3: Initialize Kafka producer
+        logger.info("[3/6] Initializing Kafka producer...")
+        try:
+            kafka_producer.connect()
+            logger.info("✅ Kafka producer initialized successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Kafka producer initialization failed (non-critical): {e}")
+
+        # Step 4: Initialize MLflow (non-blocking)
+        logger.info("[4/6] Initializing MLflow...")
         try:
             initialize_mlflow()
             logger.info("✅ MLflow initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ MLflow initialization failed (non-critical): {e}")
 
-        # Step 4: Load ML models
-        logger.info("[4/6] Loading ML models...")
+        # Step 5: Load ML models
+        logger.info("[5/6] Loading ML models...")
         try:
             ml_predictor = MLPredictor()
             await ml_predictor.load_models()
@@ -129,8 +139,8 @@ async def lifespan(app: FastAPI):
             ml_predictor = None
             raise
 
-        # Step 5: Initialize recommender services
-        logger.info("[5/6] Initializing recommender services...")
+        # Step 6: Initialize recommender services
+        logger.info("[6/6] Initializing recommender services...")
         try:
             vehicle_recommender = VehicleRecommender(redis_client)
             set_vehicle_recommender(vehicle_recommender)
@@ -151,12 +161,13 @@ async def lifespan(app: FastAPI):
             logger.error(f"❌ Recommender initialization failed: {e}")
             raise
 
-        # Step 6: Verify all services
-        logger.info("[6/6] Verifying all services...")
+        # Step 7: Verify all services
+        logger.info("[7/7] Verifying all services...")
         services_status = {
-            "Database": "✅",
+            "Database": "✅" if init_db else "❌",
             "Redis": "✅" if redis_client else "❌",
-            "MLflow": "✅",
+            "Kafka": "✅" if kafka_producer else "❌",
+            "MLflow": "✅" if initialize_mlflow else "❌",
             "ML Models": "✅" if ml_predictor else "❌",
             "Vehicle Recommender": "✅" if vehicle_recommender else "❌",
             "Surge Recommender": "✅" if surge_recommender else "❌",
@@ -190,6 +201,13 @@ async def lifespan(app: FastAPI):
         logger.info("Closing Redis connection...")
         await close_redis()
         logger.info("✅ Redis closed successfully")
+
+        # Close Kafka producer
+        try:
+            kafka_producer.close()
+            logger.info("✅ Kafka producer closed successfully")
+        except Exception as e:
+            logger.error(f"❌ Error closing Kafka producer: {e}")
 
         # Cleanup WebSocket connections
         logger.info(f"Closing {len(manager.active_connections)} WebSocket connections...")
@@ -265,44 +283,54 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             
             if data.get("type") == "driver_location":
                 # Store driver location in Redis
-                try:
-                    await redis_client.set(
-                        f"driver:loc:{user_id}",
-                        f"{data['lat']},{data['lng']}",
-                        ex=15
-                    )
-                    logger.debug(f"Driver location updated: {user_id}")
-                    
-                    # Notify nearby riders
-                    for conn_id, conn in manager.active_connections.items():
-                        if conn_id.startswith("rider_"):
-                            await manager.send_personal_message({
-                                "type": "driver_location_update",
-                                "driver_id": user_id,
-                                "lat": data["lat"],
-                                "lng": data["lng"]
-                            }, conn_id)
-                except Exception as e:
-                    logger.error(f"Error updating driver location: {e}")
+                await redis_client.set(
+                    f"driver:loc:{user_id}",
+                    f"{data['lat']},{data['lng']}",
+                    ex=15
+                )
+                logger.debug(f"Driver location updated: {user_id}")
+                
+                # Send to Kafka for data events
+                event = {
+                    "type": "driver_location",
+                    "driver_id": user_id,
+                    "lat": data["lat"],
+                    "lng": data["lng"],
+                    "timestamp": datetime.now().isoformat()
+
+                }
+                await kafka_producer.send_event("driver-events", event)
+
+                # Notify nearby riders
+                for conn_id, conn in manager.active_connections.items():
+                    if conn_id.startswith("rider_"):
+                        await manager.send_personal_message({
+                            "type": "driver_location_update",
+                            "driver_id": user_id,
+                            "lat": data["lat"],
+                            "lng": data["lng"]
+                        }, conn_id)
             
             elif data.get("type") == "ride_status":
-                # Send ride status update to specific rider
+                # Send ride status to kafka
+                event = {
+                    "type": "ride_status",
+                    "user_id": user_id,
+                    "status": data["status"],
+                    "timestamp": datetime.now().isoformat()
+                }
+                await kafka_producer.send_event("ride-events", event)
+
+                # Notify driver
                 rider_id = data.get("rider_id")
                 if rider_id:
                     await manager.send_personal_message({
                         "type": "ride_status",
                         "status": data.get('status'),
                         "ride_id": data.get('ride_id')
-                    }, rider_id)
-                    logger.debug(f"Ride status sent to {rider_id}")
-            
-            else:
-                logger.warning(f"Unknown message type: {data.get('type')}")
+                    }, user_id)
                 
     except WebSocketDisconnect:
-        manager.disconnect(user_id)
-    except Exception as e:
-        logger.error(f"WebSocket error for {user_id}: {e}")
         manager.disconnect(user_id)
 
 # Optional: Root endpoint

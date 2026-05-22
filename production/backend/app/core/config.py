@@ -16,7 +16,12 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Taxi Trip Engineering API Integration"
     DEBUG: bool = False
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:4002", "http://localhost"]
+
+    # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379"
+
+    # Kafka Configuration
+    KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
 
     # Match to .env postgresql - Supabase external postgresql configuration
     SUPABASE_USER: str

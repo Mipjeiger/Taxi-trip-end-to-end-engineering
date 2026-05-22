@@ -40,8 +40,10 @@ python-dateutil==2.8.2
 # Monitoring
 prometheus-client==0.19.0
 
-# Auth
+# Auth — pin transitive deps to avoid hash mismatch
 google-auth==2.25.2
+oauthlib==3.2.2           # pin to stable, not 3.3.1
+requests-oauthlib==1.3.1
 
 # Groq LLM
 groq==0.4.2

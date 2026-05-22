@@ -2,19 +2,20 @@ from python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies including OpenMP for XGBoost/LightGBM
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     curl \
+    gcc \
     libgomp1 \
-    libssl3 \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy wheels from the builder stage
 COPY requirements.txt .
 
 # Install Python dependencies from wheels
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
     --default-timeout=1000 \
     --retries 3 \
     -r requirements.txt \

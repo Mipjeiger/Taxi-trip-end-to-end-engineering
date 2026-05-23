@@ -13,6 +13,9 @@ class Ride(Base):
     price = Column(Float, nullable=False)
     estimated_pickup_time_minute = Column(Float, nullable=False) # VTAT - prediction
     estimated_drop_time_minute = Column(Float, nullable=False) # CTAT - prediction
+    booking_status = Column(String, nullable=False)
+    driver_status = Column(String, nullable=True)
+    avg_rating = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     completed_at = Column(DateTime, nullable=True)
 
@@ -29,17 +32,17 @@ class Ride(Base):
     is_weekend = Column(Integer, nullable=True)
     is_night = Column(Integer, nullable=True)
 
+    # LAT/LON features
+    pickup_lat = Column(Float, nullable=True)
+    pickup_lon = Column(Float, nullable=True)
+    drop_lat = Column(Float, nullable=True)
+    drop_lon = Column(Float, nullable=True)
+
     # Cyclical Encoding
     hour_sin = Column(Float, nullable=True)
     hour_cos = Column(Float, nullable=True)
     day_sin = Column(Float, nullable=True)
     day_cos = Column(Float, nullable=True)
-
-    # Status & Timestamps
-    status = Column(String, nullable=False)
-
-    # VTAT - Vehicle arrival timestamp at pickup
-    vtat = Column(DateTime, nullable=True)  # Vehicle Time to Arrival prediction
 
     def to_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}

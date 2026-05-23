@@ -115,6 +115,7 @@ async def lifespan(app: FastAPI):
         logger.info("[3/6] Initializing Kafka producer...")
         try:
             kafka_producer.connect()
+            kafka_producer._create_topics() # Ensure topics is created or exist
             logger.info("✅ Kafka producer initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ Kafka producer initialization failed (non-critical): {e}")
@@ -296,7 +297,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     "driver_id": user_id,
                     "lat": data["lat"],
                     "lng": data["lng"],
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.datetime.now().isoformat()
 
                 }
                 await kafka_producer.send_event("driver-events", event)
@@ -317,7 +318,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     "type": "ride_status",
                     "user_id": user_id,
                     "status": data["status"],
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.datetime.now().isoformat()
                 }
                 await kafka_producer.send_event("ride-events", event)
 

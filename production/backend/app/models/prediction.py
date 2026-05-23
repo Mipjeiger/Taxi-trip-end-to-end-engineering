@@ -141,10 +141,11 @@ class RideResponse(BaseModel):
     price: Optional[float]
     estimated_pickup_time_minute: float  # VTAT
     estimated_drop_time_minute: float    # CTAT
-    status: str  # BookingStatus value
+    booking_status: str  # BookingStatus value
+    driver_status: Optional[str] = None  # DriverStatus value
+    avg_rating: Optional[float] = None
     created_at: datetime
     completed_at: Optional[datetime]
-    vtat: Optional[datetime]  # Vehicle arrival timestamp
     
     # ML Features
     pickup_encoded: Optional[int]

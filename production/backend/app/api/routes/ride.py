@@ -51,16 +51,6 @@ async def create_ride_with_prediction(
             rating_avg=request.rating_avg
         )
         
-        # Parse VTAT timestamp for database storage
-        vtat_timestamp = None
-        if 'estimated_vehicle_arrival_at' in prediction:
-            try:
-                vtat_str = prediction['estimated_vehicle_arrival_at']
-                vtat_timestamp = datetime.fromisoformat(vtat_str.replace('Z', '+00:00'))
-            except Exception as e:
-                logger.warning(f"Could not parse VTAT timestamp: {e}")
-                vtat_timestamp = None
-        
         # Extract ML features for database storage
         feature_dict = await _extract_ride_features(
             pickup=request.pickup_location,
@@ -69,7 +59,7 @@ async def create_ride_with_prediction(
             booking_datetime=booking_datetime,
             distance_km=request.distance_km
         )
-        
+
         # Create ride record
         new_ride = Ride(
             id=f"RIDE-{uuid.uuid4().hex[:12].upper()}",
@@ -79,24 +69,25 @@ async def create_ride_with_prediction(
             vehicle_type=request.vehicle_type,
             price=prediction.get('estimated_price_idr'),
             estimated_pickup_time_minute=prediction.get('estimated_vehicle_arrival_minute'),  # VTAT
-            estimated_drop_time_minute=prediction.get('estimated_drop_time_minute'),          # CTAT
-            
-            # Status starts as Pending for new bookings
-            status=BookingStatus.PENDING.value,
-            created_at=booking_datetime,
-            completed_at=None,
-            vtat=vtat_timestamp,  # Vehicle arrival timestamp
-            
-            # ML Features
-            **feature_dict
-        )
+            estimated_drop_time_minute=prediction.get('estimated_drop_time_minute'),         # CTAT
         
+
+        # FIXED: Changed 'status' to 'booking_status' to match Ride model
+        booking_status = BookingStatus.PENDING.value,
+        created_at = booking_datetime,
+        completed_at = None
+
+        # FIXED: Removed vtat=vtat_timestamp because it's not defined in Ride model, and we will store VTAT as estimated_pickup_time_minute
+        # ML Features
+        **feature_dict
+        )
+
+        # Store in new ride record
         db.add(new_ride)
         await db.commit()
         await db.refresh(new_ride)
-        
-        logger.info(f"✅ Ride created: {new_ride.id} | VTAT: {vtat_timestamp} | Status: {new_ride.status}")
-        
+        logger.info(f"✅ Ride created: {new_ride.id} | Booking Status: {new_ride.booking_status}")
+
         return RideResponse.model_validate(new_ride)
     
     except Exception as e:
@@ -173,7 +164,7 @@ async def update_ride_status(
             raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
         
         # Update status
-        ride.status = new_status.value
+        ride.booking_status = new_status.value
         
         # Set completed_at if ride is completed
         if new_status == BookingStatus.COMPLETED:
@@ -187,7 +178,7 @@ async def update_ride_status(
         return {
             "success": True,
             "ride_id": ride_id,
-            "status": ride.status,
+            "status": ride.booking_status,
             "completed_at": ride.completed_at.isoformat() if ride.completed_at else None
         }
     
@@ -210,7 +201,7 @@ async def get_stats_by_status(db: AsyncSession = Depends(get_db)):
         # Count by status
         status_counts = {}
         for ride in all_rides:
-            status = ride.status
+            status = ride.booking_status
             status_counts[status] = status_counts.get(status, 0) + 1
         
         return {
@@ -236,7 +227,8 @@ async def get_stats_by_status(db: AsyncSession = Depends(get_db)):
 async def vtat_analysis(db: AsyncSession = Depends(get_db)):
     """Analyze VTAT predictions vs actual arrival times"""
     try:
-        query = select(Ride).where(Ride.vtat.isnot(None))
+        # FIXED: Query based on estimated_pickup_time_minute instead of vtat
+        query = select(Ride).where(Ride.estimated_pickup_time_minute.isnot(None))
         result = await db.execute(query)
         rides_with_vtat = result.scalars().all()
         
@@ -246,9 +238,7 @@ async def vtat_analysis(db: AsyncSession = Depends(get_db)):
         # Calculate statistics
         vtat_minutes = []
         for ride in rides_with_vtat:
-            if ride.vtat and ride.created_at:
-                vtat_min = (ride.vtat - ride.created_at).total_seconds() / 60
-                vtat_minutes.append(vtat_min)
+            vtat_minutes.append(ride.estimated_pickup_time_minute)
         
         if vtat_minutes:
             vtat_array = np.array(vtat_minutes)

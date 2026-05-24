@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 import time
 import datetime
+import threading
 from typing import Dict
 
 from app.api.routes import prediction, ride, driver, analytics, recommendations, llm
@@ -22,11 +23,16 @@ from app.api.dependencies import (
 from app.core.redis_client import get_redis, close_redis
 from app.startup import initialize_mlflow
 from app.services.kafka_producer import kafka_producer
+from kafka.consumers.events_to_databricks import EventConsumer
 
 # Prometheus metrics
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
+
+# Module level so shutdown can access
+_databricks_consumer: EventConsumer | None = None
+_consumer_thread: threading.Thread | None = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -93,7 +99,8 @@ manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle management - startup and shutdown"""
-    global ml_predictor, vehicle_recommender, surge_recommender, churn_recommender, matching_recommender, redis_client, kafka_producer
+    global ml_predictor, vehicle_recommender, surge_recommender, churn_recommender, \
+    matching_recommender, redis_client, kafka_producer, _databricks_consumer, _consumer_thread
     
     # ========== STARTUP ==========
     logger.info("=" * 70)
@@ -114,8 +121,16 @@ async def lifespan(app: FastAPI):
         # Step 3: Initialize Kafka producer
         logger.info("[3/6] Initializing Kafka producer...")
         try:
-            kafka_producer.connect()
-            kafka_producer._create_topics() # Ensure topics is created or exist
+            kafka_producer.initialize()
+
+            # Start Databricks consumer as daemon thread
+            _databricks_consumer = EventConsumer()
+            _consumer_thread = threading.Thread(
+                target=_databricks_consumer.start,
+                name="kafka-databricks-consumer",
+                daemon=True
+            )
+            _consumer_thread.start()
             logger.info("✅ Kafka producer initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ Kafka producer initialization failed (non-critical): {e}")
@@ -123,7 +138,7 @@ async def lifespan(app: FastAPI):
         # Step 4: Initialize MLflow (non-blocking)
         logger.info("[4/6] Initializing MLflow...")
         try:
-            initialize_mlflow()
+            await initialize_mlflow()
             logger.info("✅ MLflow initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ MLflow initialization failed (non-critical): {e}")
@@ -167,7 +182,8 @@ async def lifespan(app: FastAPI):
         services_status = {
             "Database": "✅" if init_db else "❌",
             "Redis": "✅" if redis_client else "❌",
-            "Kafka": "✅" if kafka_producer else "❌",
+            "Kafka Producer": "✅" if kafka_producer.connected else "⚠️ degraded",
+            "Kafka Consumer": "✅" if (_consumer_thread and _consumer_thread.is_alive()) else "⚠️ not running",
             "MLflow": "✅" if initialize_mlflow else "❌",
             "ML Models": "✅" if ml_predictor else "❌",
             "Vehicle Recommender": "✅" if vehicle_recommender else "❌",
@@ -175,7 +191,6 @@ async def lifespan(app: FastAPI):
             "Churn Recommender": "✅" if churn_recommender else "❌",
             "Matching Recommender": "✅" if matching_recommender else "❌",
         }
-        
         for service, status in services_status.items():
             logger.info(f"  {status} {service}")
 
@@ -205,10 +220,15 @@ async def lifespan(app: FastAPI):
 
         # Close Kafka producer
         try:
+            if _databricks_consumer:
+                _databricks_consumer.stop()
+            if _consumer_thread:
+                _consumer_thread.join(timeout=15)
+                logger.info("✅ Kafka consumer thread stopped")
             kafka_producer.close()
             logger.info("✅ Kafka producer closed successfully")
         except Exception as e:
-            logger.error(f"❌ Error closing Kafka producer: {e}")
+            logger.warning(f"⚠️ Kafka shutdown encountered issues: {e}")
 
         # Cleanup WebSocket connections
         logger.info(f"Closing {len(manager.active_connections)} WebSocket connections...")

@@ -163,3 +163,20 @@ class RideResponse(BaseModel):
     day_cos: Optional[float]
     
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+
+class RideBookRequest(BaseModel):
+    user_id: str
+    pickup_location: str
+    drop_location: str
+    vehicle_type: str
+    price: float
+    estimated_pickup_time_minute: float
+    estimated_drop_time_minute: float
+    pickup_encoded: int
+    drop_encoded: int
+    route_cluster: int
+    ride_distance: float
+    pickup_lat: float
+    pickup_lon: float
+    drop_lat: float
+    drop_lon: float

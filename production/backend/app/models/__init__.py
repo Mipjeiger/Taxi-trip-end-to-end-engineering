@@ -7,7 +7,8 @@ from .prediction import (
     RideResponse,
     BookingStatus,
     VehicleArrivalStatus,
-    DriverStatus
+    DriverStatus,
+    RideBookRequest
 )
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "RideResponse",
     "BookingStatus",
     "VehicleArrivalStatus",
-    "DriverStatus"
+    "DriverStatus",
+    "RideBookRequest"
 ]

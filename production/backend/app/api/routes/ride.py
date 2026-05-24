@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 import numpy as np
 from fastapi import APIRouter, HTTPException, Depends
@@ -13,13 +14,22 @@ from app.models.prediction import (
     RideResponse,
     BookingStatus,
     VehicleArrivalStatus,
-    DriverStatus
+    DriverStatus,
+    RideBookRequest
 )
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
+from app.startup import producer_event
+from app.services.ride_service import (
+    create_ride_in_db,
+    complete_ride_in_db,
+    get_ride_history
+)
+from app.services.kafka_producer import kafka_producer
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
 
 @router.post("/request", response_model=RideResponse)
 async def create_ride_with_prediction(
@@ -118,6 +128,40 @@ async def get_ride_history(
         
         return [RideResponse.model_validate(ride) for ride in rides]
     
+    except Exception as e:
+        logger.error(f"Error fetching ride history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/rides/book")
+async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        ride = await create_ride_in_db(db, **payload._model_dump())
+    except Exception as e:
+        logger.error(f"Error booking ride: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    # Publish to Kafka - non-blocking, won't fail the booking if kafka is down
+    await kafka_producer.send_event("ride-requests", {
+        "event_type": "ride_booked",
+        "ride_id": ride.id,
+        "user_id": ride.user_id,
+        "vehicle_type": ride.vehicle_type,
+        "price": ride.price,
+        "pickup_location": ride.pickup_location,
+        "drop_location": ride.drop_location,
+        "timestamp": time.time()
+    });
+
+    return ride
+
+@router.get("/rides/history/{user_id}")
+async def ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """
+    This way original 500 endpoint - now uses ride_service
+    which queries only columns that actually exist in the DB"""
+    try:
+        rides = await get_ride_history(db, user_id, limit)
+        return rides
     except Exception as e:
         logger.error(f"Error fetching ride history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

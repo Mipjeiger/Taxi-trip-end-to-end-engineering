@@ -23,7 +23,7 @@ from app.api.dependencies import (
 
 # Redis & MLflow imports
 from app.core.redis_client import get_redis, close_redis
-from app.startup import initialize_mlflow
+from app.startup import initialize_mlflow, initialize_kafka, shutdown_kafka
 
 # Kafka producer & consumer
 from app.services.kafka_producer import kafka_producer
@@ -126,22 +126,13 @@ async def lifespan(app: FastAPI):
         redis_client = await get_redis()
         logger.info("✅ Redis initialized successfully")
 
-        # Step 3: Initialize Kafka producer
-        logger.info("[3/6] Initializing Kafka producer...")
+        # Step 3: Initialize Kafka
+        logger.info("[3/6] Initializing Kafka...")
         try:
-            kafka_producer.initialize()
-
-            # Start Databricks consumer as daemon thread
-            _databricks_consumer = EventConsumer()
-            _consumer_thread = threading.Thread(
-                target=_databricks_consumer.start,
-                name="kafka-databricks-consumer",
-                daemon=True
-            )
-            _consumer_thread.start()
-            logger.info("✅ Kafka producer initialized successfully")
+            await initialize_kafka()
+            logger.info("✅ Kafka initialized successfully")
         except Exception as e:
-            logger.warning(f"⚠️ Kafka producer initialization failed (non-critical): {e}")
+            logger.warning(f"⚠️ Kafka initialization failed (non-critical): {e}")
 
         # Step 4: Initialize Databricks
         logger.info("[4/6] Initializing Databricks client...")
@@ -232,22 +223,15 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 70)
     
     try:
+        # Close Kafka connection
+        logger.info("Closing Kafka connections...")
+        await shutdown_kafka()
+        logger.info("✅ Kafka connections closed successfully")
+
         # Close Redis connection
         logger.info("Closing Redis connection...")
         await close_redis()
         logger.info("✅ Redis closed successfully")
-
-        # Close Kafka producer
-        try:
-            if _databricks_consumer:
-                _databricks_consumer.stop()
-            if _consumer_thread:
-                _consumer_thread.join(timeout=15)
-                logger.info("✅ Kafka consumer thread stopped")
-            kafka_producer.close()
-            logger.info("✅ Kafka producer closed successfully")
-        except Exception as e:
-            logger.warning(f"⚠️ Kafka shutdown encountered issues: {e}")
 
         # Cleanup WebSocket connections
         logger.info(f"Closing {len(manager.active_connections)} WebSocket connections...")

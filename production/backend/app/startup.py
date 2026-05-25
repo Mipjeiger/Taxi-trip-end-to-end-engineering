@@ -3,11 +3,9 @@ from dotenv import load_dotenv
 import logging
 import os
 import mlflow
-import asyncio
 import json
-import time
 import threading
-from kafka.consumers.events_to_databricks import EventConsumer
+from typing import Optional
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -44,62 +42,35 @@ async def initialize_mlflow():
         raise
 
 # ----------------------------------------------------------------
-# Kafka Producer (module-level sigleton)
+# Kafka Consumer (runs as background task)
 # ----------------------------------------------------------------
-
-_kafka_producer = None
-
-def get_kafka_producer():
-    """Return the global Confluent Kafka Producer, intialized once."""
-    global _kafka_producer
-    if _kafka_producer is None:
-        raise RuntimeError("Kafka producer is not initialized. Call initialize_kafka_producer() first.")
-    return _kafka_producer
-
-def produce_event(topic: str, key: str, payload: dict):
-    """Fire-and-forget Kafka Produce. Safe to call from any route.
-    Delivery errors are logged but nerver raise to othe caller"""
-    try:
-        producer = get_kafka_producer()
-        producer.produce(
-            topic=topic,
-            key=key.encode('utf-8'),
-            value=json.dumps(payload).encode('utf-8'),
-            callback=_delivery_report
-        )
-        producer.poll(0)  # Trigger delivery report callbacks
-    except Exception as e:
-        logger.error(f"❌ Kafka produce error on topic '{topic}': {e}")
-
 def _delivery_report(err, msg):
+    """Kafka producer delivery report callback"""
     if err:
         logger.error(f"❌ Kafka delivery failed for message {msg.key().decode('utf-8')}: {err}")
     else:
         logger.debug(f"✅ Kafka message delivered to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}")
 
 
-# ----------------------------------------------------------------
-# Kafka Consumer (runs as background task)
-# ----------------------------------------------------------------
-_consumer_task: asyncio.Task | None = None
-
 def _consume_loop(bootstrap_servers: str, topics: list[str], group_id: str):
     """Blocking consumer loop - runs in a thread via run_in_executor.
     Add business logic inside the for-loop."""
-    from confluent_kafka import Consumer, KafkaException
-
-    consumer = Consumer({
-        "bootstrap.servers": bootstrap_servers,
-        "group.id": group_id,
-        "auto.offset.reset": "earliest",
-        "enable.auto.commit": True,
-        "session.timeout.ms": 30000
-    })
-    consumer.subscribe(topics)
-    logger.info(f"🎧 Kafka consumer subscribed to topics: {topics}")
-    
-    # Logic to consume messages while True
     try:
+        from confluent_kafka import Consumer, KafkaException
+    except ImportError:
+        logger.warning("⚠️ confluent_kafka library is not installed. Kafka consumer will be unavailable.")
+        return
+    try:
+        consumer = Consumer({
+            "bootstrap.servers": bootstrap_servers,
+            "group.id": group_id,
+            "auto.offset.reset": "earliest",
+            "enable.auto.commit": True,
+            "session.timeout.ms": 30000
+        })
+        consumer.subscribe(topics)
+        logger.info(f"🎧 Kafka consumer subscribed to topics: {topics}")
+    
         while True:
             msg = consumer.poll(timeout=1.0)
             if msg is None:
@@ -125,11 +96,15 @@ def _consume_loop(bootstrap_servers: str, topics: list[str], group_id: str):
             except Exception as e:
                 logger.error(f"❌ Error processing message from topic {msg.topic()}: {e}")
 
-    except asyncio.CancelledError:
-        pass
+    except Exception as e:
+        logger.error(f"❌ Kafka consumer error: {e}")
     finally:
-        consumer.close()
-        logger.info("🛑 Kafka consumer closed.")
+        try:
+            # Close connection on exit
+            consumer.close()
+            logger.info("🛑 Kafka consumer closed.")
+        except:
+            pass
 
 # Create function for handling ride requests
 def _handle_ride_request(payload: dict):
@@ -145,39 +120,56 @@ def _handle_driver_event(payload: dict):
     # TODO: update driver location/availability
 
 # ----------------------------------------------------------------
-# Main initializer - called from FastAPI startup event (main.py)
+# Kafka Initialization (called from FastAPI lifespan)
 # ----------------------------------------------------------------
-_databricks_consumer: EventConsumer | None = None
-_consumer_thread: threading.Thread | None = None
+
+_consumer_thread: Optional[threading.Thread] = None
 
 async def initialize_kafka():
     """
     Call this once from FastAPI lifespan startup.
     Initialises the producer singleton and spawns the consumer task.
     """
-    global _kafka_producer, _consumer_task, _databricks_consumer, _consumer_thread
+    global _consumer_thread
 
-    # 1. init the producer singleton (with existing framework in kafka_producer)
-    from app.services.kafka_producer import kafka_producer
-    kafka_producer.initialize() # deffered connection and topic creation
+    try:
+        # 1. init the producer singleton (with existing framework in kafka_producer)
+        from app.services.kafka_producer import kafka_producer
+        
+        # Kafka producer is already initialized
+        logger.info("🔌 Kafka producer initialized ready.")
 
-    # 2. Start Databricks consumer in background thread
-    _databricks_consumer = EventConsumer()
-    _consumer_thread = threading.Thread(
-        target=_databricks_consumer.start,
-        name="kafka-databricks-consumer",
-        daemon=True
-    )
-    _consumer_thread.start()
-    logger.info("✅ Databricks Kafka consumer started in background thread.")
+        # Start consumer thread
+        bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        topics = ["driver-events", "ride-events", "ride-requests"]
+        group_id = "taxi-trip-backend"
+
+        _consumer_thread = threading.Thread(
+            target=_consume_loop, 
+            args=(bootstrap_servers, topics, group_id), 
+            name="kafka-consumer",
+            daemon=True
+        )
+        _consumer_thread.start()
+        logger.info("🚀 Kafka consumer thread started.")
+
+    except Exception as e:
+        logger.error(f"❌ Kafka initialization failed: {e}")
 
 async def shutdown_kafka():
-    from app.services.kafka_producer import kafka_producer
-    kafka_producer.close()
+    """Shutdown Kafka consumer gracefully on FastAPI shutdown."""
+    global _consumer_thread
 
-    if _databricks_consumer:
-        _databricks_consumer.stop()
-    
-    if _consumer_thread:
-        _consumer_thread.join(timeout=15)
-    logger.info("✅ Databricks Kafka consumer thread stopped.")
+    try:
+        from app.services.kafka_producer import kafka_producer
+        kafka_producer.close()  # close producer connection if needed
+        logger.info("✅ Kafka producer connection closed.")
+    except Exception as e:
+        logger.warning(f"⚠️ Error closing Kafka producer: {e}")
+
+    # Consumer thread will exit on its own since it's a daemon thread
+    if _consumer_thread and _consumer_thread.is_alive():
+        logger.info("🛑 Kafka consumer thread will be stopped on process exit.")
+        _consumer_thread.join(timeout=5)
+
+    logger.info("✅ Kafka shutdown complete.")

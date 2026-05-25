@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     SUPABASE_DB: str
     USE_ASYNC_PG: bool = True
 
+    # Evidently AI Configuration
+    EVIDENTLY_API_KEY: Optional[str] = None
+
     # LLM Configuration
     GROQ_API_KEY: Optional[str] = None
     LLM_PROVIDER: str = "groq" 

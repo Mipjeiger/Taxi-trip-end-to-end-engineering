@@ -27,7 +27,7 @@ from app.startup import initialize_mlflow, initialize_kafka, shutdown_kafka
 
 # Kafka producer & consumer
 from app.services.kafka_producer import kafka_producer
-from kafka.consumers.events_to_databricks import EventConsumer
+from app.services.kafka_consumer import EventConsumer
 
 # Prometheus metrics
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY

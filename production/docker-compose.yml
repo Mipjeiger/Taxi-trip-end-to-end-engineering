@@ -3,7 +3,7 @@ services:
   # Redis for caching and real-time features
   redis:
     image: redis:7-alpine
-    container_name: taxi_trip_redis
+    container_name: redis
     ports:
       - "6379:6379"
     volumes:
@@ -20,7 +20,7 @@ services:
   # RedisInsight for UI redis
   redisinsight:
     image: redis/redisinsight:latest
-    container_name: taxi_trip_redisinsight
+    container_name: redisinsight
     ports:
       - "5540:5540"
     depends_on:
@@ -35,7 +35,7 @@ services:
   # MLflow for experiment tracking and model management
   mlflow:
     image: ghcr.io/mlflow/mlflow:latest
-    container_name: taxi_trip_mlflow
+    container_name: mlflow
     ports:
       - "5001:5000"
     volumes:
@@ -61,7 +61,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: taxi_trip_backend
+    container_name: backend
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -103,7 +103,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: taxi_trip_frontend
+    container_name: frontend
     ports:
       - "4002:80"
     depends_on:
@@ -125,7 +125,7 @@ services:
   # Prometheus for monitoring
   prometheus:
     image: prom/prometheus:latest
-    container_name: taxi_trip_prometheus
+    container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -141,7 +141,7 @@ services:
   # Grafana for visualization metrics
   grafana:
     image: grafana/grafana:latest
-    container_name: taxi_trip_grafana
+    container_name: grafana
     ports:
       - "3000:3000"
     environment:
@@ -160,7 +160,7 @@ services:
   # Airflow database
   airflow-db:
     image: postgres:15-alpine
-    container_name: taxi_trip_airflow_db
+    container_name: airflow_db
     environment:
       POSTGRES_USER: ${AIRFLOW_DB_USER}
       POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
@@ -181,7 +181,7 @@ services:
     build:
       context: ./backend/airflow
       dockerfile: Dockerfile  
-    container_name: taxi_trip_airflow_webserver
+    container_name: airflow_webserver
     deploy:
       resources:
         limits:
@@ -242,7 +242,7 @@ services:
     build:
       context: ./backend/airflow
       dockerfile: Dockerfile
-    container_name: taxi_trip_airflow_scheduler
+    container_name: airflow_scheduler
     deploy:
       resources:
         limits:
@@ -289,10 +289,10 @@ services:
       - taxi_trip_network
     restart: unless-stopped
 
-    # Apache kafka - Event streaming for frontend interactions and real-time features
+  # Apache kafka - Event streaming for frontend interactions and real-time features
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
-    container_name: taxi_trip_zookeeper
+    container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -311,7 +311,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    container_name: taxi_trip_kafka
+    container_name: kafka
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -349,10 +349,10 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-    # Kafka UI - Monitoring kafka topics and messages
+  # Kafka UI - Monitoring kafka topics and messages
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
-    container_name: taxi_trip_kafka_ui
+    container_name: kafka_ui
     environment:
       KAFKA_CLUSTERS_0_NAME: taxi-cluster
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092 # User INTERNAL port for inter-container

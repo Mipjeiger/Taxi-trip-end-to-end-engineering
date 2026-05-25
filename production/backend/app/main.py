@@ -20,8 +20,12 @@ from app.api.dependencies import (
     set_ml_predictor, set_vehicle_recommender, set_surge_recommender,
     set_churn_recommender, set_matching_recommender
 )
+
+# Redis & MLflow imports
 from app.core.redis_client import get_redis, close_redis
 from app.startup import initialize_mlflow
+
+# Kafka producer & consumer
 from app.services.kafka_producer import kafka_producer
 from kafka.consumers.events_to_databricks import EventConsumer
 
@@ -29,6 +33,10 @@ from kafka.consumers.events_to_databricks import EventConsumer
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
+
+# Databricks framework imports
+from app.api.routes import databricks
+from app.core.databricks_client import databricks_client
 
 # Module level so shutdown can access
 _databricks_consumer: EventConsumer | None = None
@@ -135,16 +143,26 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ Kafka producer initialization failed (non-critical): {e}")
 
-        # Step 4: Initialize MLflow (non-blocking)
-        logger.info("[4/6] Initializing MLflow...")
+        # Step 4: Initialize Databricks
+        logger.info("[4/6] Initializing Databricks client...")
+        try:
+            if databricks_client.connected:
+                logger.info("✅ Databricks client initialized successfully")
+            else:
+                logger.warning("⚠️ Databricks client failed to connect (non-critical)")
+        except Exception as e:
+            logger.warning(f"⚠️ Databricks client initialization failed (non-critical): {e}")
+
+        # Step 5: Initialize MLflow (non-blocking)
+        logger.info("[5/6] Initializing MLflow...")
         try:
             await initialize_mlflow()
             logger.info("✅ MLflow initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ MLflow initialization failed (non-critical): {e}")
 
-        # Step 5: Load ML models
-        logger.info("[5/6] Loading ML models...")
+        # Step 6: Load ML models
+        logger.info("[6/6] Loading ML models...")
         try:
             ml_predictor = MLPredictor()
             await ml_predictor.load_models()
@@ -155,8 +173,9 @@ async def lifespan(app: FastAPI):
             ml_predictor = None
             raise
 
-        # Step 6: Initialize recommender services
-        logger.info("[6/6] Initializing recommender services...")
+
+        # Step 7: Initialize recommender services
+        logger.info("[7/7] Initializing recommender services...")
         try:
             vehicle_recommender = VehicleRecommender(redis_client)
             set_vehicle_recommender(vehicle_recommender)
@@ -177,8 +196,8 @@ async def lifespan(app: FastAPI):
             logger.error(f"❌ Recommender initialization failed: {e}")
             raise
 
-        # Step 7: Verify all services
-        logger.info("[7/7] Verifying all services...")
+        # Step 8: Verify all services
+        logger.info("[8/8] Verifying all services...")
         services_status = {
             "Database": "✅" if init_db else "❌",
             "Redis": "✅" if redis_client else "❌",
@@ -266,6 +285,7 @@ app.add_middleware(MetricsMiddleware)
 
 # Include routers
 logger.info("Registering API routes...")
+app.include_router(databricks.router, prefix="/api/databricks", tags=["databricks"])
 app.include_router(prediction.router, prefix="/api/predict", tags=["predictions"])
 app.include_router(ride.router, prefix="/api/rides", tags=["rides"])
 app.include_router(driver.router, prefix="/api/drivers", tags=["drivers"])

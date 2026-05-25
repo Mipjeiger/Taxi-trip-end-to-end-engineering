@@ -38,6 +38,9 @@ from fastapi.responses import Response
 from app.api.routes import databricks
 from app.core.databricks_client import databricks_client
 
+# Evidently AI imports
+from app.api.routes import evidently
+
 # Module level so shutdown can access
 _databricks_consumer: EventConsumer | None = None
 _consumer_thread: threading.Thread | None = None
@@ -276,6 +279,7 @@ app.include_router(driver.router, prefix="/api/drivers", tags=["drivers"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(recommendations.router, prefix="/api/recommend", tags=["recommendations"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
+app.include_router(evidently.router, prefix="/api/evidently", tags=["evidently"])
 logger.info("✅ All routes registered successfully")
 
 # ========== ENDPOINTS ==========

@@ -1,0 +1,10 @@
+datasets:
+  - name: llm_interactions
+    path: /root/evidently_service/llm_data
+    description: "LLM chat interaction data for monitoring and analysis"
+
+projects:
+  - name: llm_monitoring
+    description: "LLM feature drift detection"
+    datasets:
+      - llm_interactions

@@ -19,7 +19,6 @@ from app.models.prediction import (
 )
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
-from app.startup import producer_event
 from app.services.ride_service import (
     create_ride_in_db,
     complete_ride_in_db,

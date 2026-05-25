@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir evidently==0.7.21
+
+EXPOSE 8085
+
+CMD ["python", "-m", "evidently.ui.run", "--hosts", "0.0.0.0", "--port", "8085", "--workspace", "/app/evidently"]

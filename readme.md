@@ -38,7 +38,7 @@
     - API Testing to ensure prediction is reliable
     ![alt text](images/E427ECCA-417B-48E3-B76A-28FEEF4D43A5.png)
 
-- Build Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
+- [Fullstack AI/ML Engineer[: Build MLOps Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
     - Target machine learning model
         - Predict Price
         - Predict completed at ride (timestamp for completing ride)
@@ -62,7 +62,7 @@
         ![alt text](images/D8159409-6F3C-4E50-B08A-388B2AC6CE63.png)
     - Kafka to retrive data click button from customer
     
-- Build UI Taxi apps for user (Production Grade)
+- [Frontend]: Build UI Taxi apps for user (Production Grade)
     - UI display in mobile apps
     ![alt text](images/BD152BC8-72EB-418E-9885-93F5B751B062.png)
     - Location stats drop and pickup location
@@ -154,7 +154,6 @@
     - status = searching_driver
 
 - Step 4 — Redis (Real-Time Cache)
-    Redis
     Redis provides ultra-fast temporary data access.
     Taxi systems need instant responses.
     What Happens

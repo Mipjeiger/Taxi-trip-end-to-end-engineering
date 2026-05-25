@@ -157,7 +157,7 @@ async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_db)
 @router.get("/rides/history/{user_id}")
 async def ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_db)):
     """
-    This way original 500 endpoint - now uses ride_service
+    This 500 endpoint - now uses ride_service
     which queries only columns that actually exist in the DB"""
     try:
         rides = await get_ride_history(db, user_id, limit)

@@ -26,7 +26,7 @@
         • A/B Testing inferences in otherway
     - Monitoring
         • Monitor models are using on production
-- Build Google Maps in a notebook cell Google maps display enterprise for taxi trip distance
+- [Data Science]: Build Google Maps in a notebook cell Google maps display enterprise for taxi trip distance
     - Interactive map generated with 10 routes
     ![alt text](images/FE8C72D8-FB62-4205-8568-D82EA975BF00.png)
     - google maps previews
@@ -38,7 +38,28 @@
     - API Testing to ensure prediction is reliable
     ![alt text](images/E427ECCA-417B-48E3-B76A-28FEEF4D43A5.png)
 
-- [Fullstack AI/ML Engineer[: Build MLOps Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
+- [Frontend]: Build UI Taxi apps for user (Production Grade)
+    - UI display in mobile apps
+        - Home display in mobile apps
+        ![alt text](images/mobile/4938600A-C313-4605-98C1-D9A0B9E1BA7E.png)
+        - Pick up & drop location
+        ![alt text](images/mobile/4938600A-C313-4605-98C1-D9A0B9E1BA7E.png)
+        - Rides history
+        ![alt text](images/mobile/3069ABDF-C67F-4F4F-8EE5-694D6B2A35F8.png)
+        - Driver around tracking
+        ![alt text](images/mobile/BA025216-8B62-4BB3-8B48-165E747F2D70.png)
+    ------------------------------------------------------------
+    - UI display in website
+        - Home display in website
+        ![alt text](images/website/3BF3373D-7FE0-48A1-9036-4D7FE9214BB2.png)
+        - Dashboard analytics
+        ![alt text](images/website/3B6BC606-0169-4A59-9C23-49FEE4B82843.png)
+        - Driver dashboard
+        ![alt text](images/website/36E3104B-6614-448A-BF94-A0BCF06B6F3B.png)
+        - Account trip service & payment method
+        ![alt text](images/website/B59D7F33-AC71-40B5-BE1E-F7DAFD060B68.png)
+
+- [Fullstack AI/ML Engineer]: Build MLOps Engineering system focused on AI/ML, Data Engineering to settle on the production, feature recommendation engineering
     - Target machine learning model
         - Predict Price
         - Predict completed at ride (timestamp for completing ride)
@@ -62,27 +83,6 @@
         ![alt text](images/D8159409-6F3C-4E50-B08A-388B2AC6CE63.png)
     - Kafka to retrive data click button from customer
     
-- [Frontend]: Build UI Taxi apps for user (Production Grade)
-    - UI display in mobile apps
-        - Home display in mobile apps
-        ![alt text](images/mobile/4938600A-C313-4605-98C1-D9A0B9E1BA7E.png)
-        - Pick up & drop location
-        ![alt text](images/mobile/4938600A-C313-4605-98C1-D9A0B9E1BA7E.png)
-        - Rides history
-        ![alt text](images/mobile/3069ABDF-C67F-4F4F-8EE5-694D6B2A35F8.png)
-        - Driver around tracking
-        ![alt text](images/mobile/BA025216-8B62-4BB3-8B48-165E747F2D70.png)
-    ------------------------------------------------------------
-    - UI display in website
-        - Home display in website
-        ![alt text](images/website/3BF3373D-7FE0-48A1-9036-4D7FE9214BB2.png)
-        - Dashboard analytics
-        ![alt text](images/website/3B6BC606-0169-4A59-9C23-49FEE4B82843.png)
-        - Driver dashboard
-        ![alt text](images/website/36E3104B-6614-448A-BF94-A0BCF06B6F3B.png)
-        - Account trip service & payment method
-        ![alt text](images/website/B59D7F33-AC71-40B5-BE1E-F7DAFD060B68.png)
-
 - 🎯 GOALS ENGINEERING PROJECT
 - Step 1 — Frontend (Website & Mobile App)
     Frontend is the user interaction layer.

@@ -294,15 +294,16 @@ services:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
     environment:
+      ZOO_CFG_EXTRA: "dataDir=/var/lib/zookeeper/data"
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-      ZOOKEEPER_4LW_COMMANDS_WHITELIST: srvr,ruok,stat,mntr  # enable ruok
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
     networks:
       - taxi_trip_network
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo srvr | nc localhost 2181 | grep -q Mode"]
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -338,7 +339,8 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     ports:
-      - "9092:9092" # Port external for host machine access
+      - "9092:9092" # Port internal for host machine access
+      - "29092:29092" # Port external for Docker network access
     networks:
       - taxi_trip_network
     healthcheck:
@@ -412,6 +414,7 @@ volumes:
   airflow_db_data:
   airflow_logs_volume:
   zookeeper_data:
+  zookeeper_logs:
   kafka_data:
   evidently_data:
 

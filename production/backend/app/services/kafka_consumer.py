@@ -49,7 +49,7 @@ class EventConsumer:
     FLUSH_INTERVAL = 30  # seconds
 
     def __init__(self, bootstrap_servers: str = None):
-        self.bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+        self.bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS")
         self.consumer = None
         self.databricks_conn = None
         self._stop_event = threading.Event()
@@ -183,7 +183,7 @@ class EventConsumer:
         try:
             # Parameterized query - no SQL injection risk
             insert_sql = """
-                INSERT INTO taxi_trip_frontend_events
+                INSERT INTO taxi_trip_data_events
                     (event_type, user_id, topic, event_data, event_timestamp)
                     VALUES (?, ?, ?, ?, ?)
             """

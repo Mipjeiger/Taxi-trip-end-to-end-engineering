@@ -64,12 +64,24 @@
     
 - [Frontend]: Build UI Taxi apps for user (Production Grade)
     - UI display in mobile apps
-    ![alt text](images/BD152BC8-72EB-418E-9885-93F5B751B062.png)
-    - Location stats drop and pickup location
-    ![alt text](images/49C7B5F4-1023-45C8-B401-2B6189E1110B.png)
+        - Home display in mobile apps
+        ![alt text](images/mobile/4938600A-C313-4605-98C1-D9A0B9E1BA7E.png)
+        - Pick up & drop location
+        ![alt text](images/mobile/4938600A-C313-4605-98C1-D9A0B9E1BA7E.png)
+        - Rides history
+        ![alt text](images/mobile/3069ABDF-C67F-4F4F-8EE5-694D6B2A35F8.png)
+        - Driver around tracking
+        ![alt text](images/mobile/BA025216-8B62-4BB3-8B48-165E747F2D70.png)
     ------------------------------------------------------------
     - UI display in website
-    ![alt text](images/9516A71F-E76B-46E2-9BCD-BCA96B46CE96.png)
+        - Home display in website
+        ![alt text](images/website/3BF3373D-7FE0-48A1-9036-4D7FE9214BB2.png)
+        - Dashboard analytics
+        ![alt text](images/website/3B6BC606-0169-4A59-9C23-49FEE4B82843.png)
+        - Driver dashboard
+        ![alt text](images/website/36E3104B-6614-448A-BF94-A0BCF06B6F3B.png)
+        - Account trip service & payment method
+        ![alt text](images/website/B59D7F33-AC71-40B5-BE1E-F7DAFD060B68.png)
 
 - 🎯 GOALS ENGINEERING PROJECT
 - Step 1 — Frontend (Website & Mobile App)

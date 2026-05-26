@@ -49,7 +49,7 @@ class EventConsumer:
     FLUSH_INTERVAL = 30  # seconds
 
     def __init__(self, bootstrap_servers: str = None):
-        self.bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS") # Use port internal access (in docker .env)
+        self.bootstrap_servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092") # Use port internal access (in docker .env)
         self.consumer = None
         self.databricks_conn = None
         self._stop_event = threading.Event()

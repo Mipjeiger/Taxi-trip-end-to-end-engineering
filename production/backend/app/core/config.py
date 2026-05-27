@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     DATABRICKS_HOST: Optional[str] = None
     DATABRICKS_TOKEN: Optional[str] = None
     DATABRICKS_HTTP_PATH: Optional[str] = None
-    DATABRICKS_WAREHOUSE_ID: Optional[str] = None
+    DATABRICKS_WAREHOUSE_ID: Optional[str] = None 
 
     # Kafka Configuration
     KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"

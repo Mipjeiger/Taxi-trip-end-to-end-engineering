@@ -49,7 +49,7 @@
         - Account trip service & payment method
         ![alt text](images/website/B59D7F33-AC71-40B5-BE1E-F7DAFD060B68.png)
     ------------------------------------------------------------
-    - UI display in mobile apps
+    - UI display in mobile appss
         - Home display in mobile apps
         ![alt text](images/mobile/4938600A-C313-4605-98C1-D9A0B9E1BA7E.png)
         - Pick up & drop location

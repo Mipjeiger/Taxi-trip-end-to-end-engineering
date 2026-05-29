@@ -97,7 +97,7 @@ def validate_rides_data(**context):
         'null_values': df.isnull().sum().astype(int).to_dict(),
         'duplicate_rows': int(len(df[df.duplicated(subset=['id'])])),
         'price_null': int(df['price'].isnull().sum()),
-        'valid_status': int(df['status'].isin([...]).sum()),
+        'valid_status': int(df['booking_status'].isin([...]).sum()),
         'date_range': {
             'earliest': str(df['created_at'].min()),
             'latest': str(df['created_at'].max())

@@ -27,7 +27,6 @@ from app.startup import initialize_mlflow, initialize_kafka, shutdown_kafka
 
 # Kafka producer & consumer
 from app.services.kafka_producer import kafka_producer
-from app.services.kafka_consumer import EventConsumer
 
 # Prometheus metrics
 from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_RIDES, PREDICTION_TIME, REGISTRY
@@ -40,10 +39,6 @@ from app.core.databricks_client import databricks_client
 
 # Evidently AI imports
 from app.api.routes import evidently
-
-# Module level so shutdown can access
-_databricks_consumer: EventConsumer | None = None
-_consumer_thread: threading.Thread | None = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -189,6 +184,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"❌ Recommender initialization failed: {e}")
             raise
+            
+        # Create logic to call _consumer_thread by intialize_kafka_consumer()
+        try:
+            from app.startup import initialize_kafka_consumer
+
+            # Start kafka consumer in background thread
+            kafka_consumer = await initialize_kafka_consumer()
+            if kafka_consumer:
+                logger.info("✅ Kafka consumer initialized and running in background thread")
+        except:
+            logger.warning("❌ Kafka consumer failed to initialize (non-critical)")
+            raise
 
         # Step 8: Verify all services
         logger.info("[8/8] Verifying all services...")
@@ -196,7 +203,7 @@ async def lifespan(app: FastAPI):
             "Database": "✅" if init_db else "❌",
             "Redis": "✅" if redis_client else "❌",
             "Kafka Producer": "✅" if kafka_producer.connected else "⚠️ degraded",
-            "Kafka Consumer": "✅" if (_consumer_thread and _consumer_thread.is_alive()) else "⚠️ not running",
+            "Kafka Consumer": "✅" if kafka_consumer else "⚠️ not running",
             "MLflow": "✅" if initialize_mlflow else "❌",
             "ML Models": "✅" if ml_predictor else "❌",
             "Vehicle Recommender": "✅" if vehicle_recommender else "❌",

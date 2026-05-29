@@ -7,13 +7,21 @@ import json
 import threading
 from typing import Optional
 
-# Set up logging
+# ----------------------------------------------------------------
+# Set up
+# ----------------------------------------------------------------
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # Load env
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = BASE_DIR / '.env'
+logging.info(f"✅ Loaded environtment variables from: {ENV_PATH}")
+
+if not ENV_PATH.exists():
+    ENV_PATH = BASE_DIR.parent / '.env'
+    logging.warning(f"⚠️ .env file not found at {ENV_PATH}, trying fallback location: {ENV_PATH}")
+
 load_dotenv(dotenv_path=ENV_PATH)
 
 # ----------------------------------------------------------------
@@ -23,153 +31,132 @@ async def initialize_mlflow():
     """Initialize and log all existing models to MLflow"""
     try:
         models_dir = Path("/app/models")
+
         if not models_dir.exists():
             logger.warning(f"⚠️ Models directory not found at {models_dir}")
-        else:
-            model_files = list(models_dir.glob("*.keras")) + list(models_dir.glob("*.pkl"))
-            logger.info(f"📂 Found {len(model_files)} model files in {models_dir}")
-            
-            # Loop through and log each model
-            for model_file in model_files:
-                logger.info(f"   - {model_file.name}")
+            return
+        
+        model_files = list(models_dir.glob("*.keras")) + list(models_dir.glob("*.pkl"))
+        logger.info(f"📂 Found {len(model_files)} model files in {models_dir}")
+        
+        # Loop through and log each model
+        for model_file in model_files:
+            logger.info(f"   - {model_file.name}")
 
-        # MLflow init with timeout
-        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
-        logger.info(f"🔗 Connected to MLflow at {mlflow.get_tracking_uri()}")
+        # MLflow initialization
+        mlflow_uri = os.getenv("MLFLOW_TRACKING_URI")
+        if mlflow_uri:
+            mlflow.set_tracking_uri(mlflow_uri)
+            logger.info(f"🔗 Connected to MLflow at {mlflow.get_tracking_uri()}")
+        else:
+            logger.warning("⚠️ MLFLOW_TRACKING_URI is not set. MLflow logging will be unavailable.")
     
     except Exception as e:
         logger.error(f"❌ MLflow initialization failed: {str(e)}")
         raise
 
 # ----------------------------------------------------------------
-# Kafka Consumer (runs as background task)
+# Kafka Producer Initialization (singleton)
 # ----------------------------------------------------------------
-def _delivery_report(err, msg):
-    """Kafka producer delivery report callback"""
-    if err:
-        logger.error(f"❌ Kafka delivery failed for message {msg.key().decode('utf-8')}: {err}")
-    else:
-        logger.debug(f"✅ Kafka message delivered to {msg.topic()} [{msg.partition()}] at offset {msg.offset()}")
-
-
-def _consume_loop(bootstrap_servers: str, topics: list[str], group_id: str):
-    """Blocking consumer loop - runs in a thread via run_in_executor.
-    Add business logic inside the for-loop."""
+async def initialize_kafka_producer():
+    """Initialize kafka producer singleton"""
     try:
-        from confluent_kafka import Consumer, KafkaException
-    except ImportError:
-        logger.warning("⚠️ confluent_kafka library is not installed. Kafka consumer will be unavailable.")
-        return
-    try:
-        consumer = Consumer({
-            "bootstrap.servers": bootstrap_servers,
-            "group.id": group_id,
-            "auto.offset.reset": "earliest",
-            "enable.auto.commit": True,
-            "session.timeout.ms": 30000
-        })
-        consumer.subscribe(topics)
-        logger.info(f"🎧 Kafka consumer subscribed to topics: {topics}")
+        from app.services.kafka_producer import kafka_producer
+
+        kafka_producer.initialize()  # Initialize the producer connection
+        logger.info("✅ Kafka producer initialized and ready.")
+        logger.info("📒 Topics: ride-requests, ride-events, driver-events, frontend-events")
+        return True
     
-        while True:
-            msg = consumer.poll(timeout=1.0)
-            if msg is None:
-                continue
-            if msg.error():
-                raise KafkaException(msg.error())
-            
-            try:
-                payload = json.loads(msg.value().decode('utf-8'))
-                event_type = payload.get("event_type", "unknown")
-                logger.info(f"📨 [{msg.topic()}] event_type={event_type} key={msg.key()}")
-
-                # Route events to handlers
-                if msg.topic() == "ride-requests":
-                    _handle_ride_request(payload)
-                elif msg.topic() == "ride-events":
-                    _handle_ride_event(payload)
-                elif msg.topic() == "driver-events":
-                    _handle_driver_event(payload)
-            
-            except json.JSONDecodeError:
-                logger.warning(f"⚠️ Failed to decode JSON from message on topic {msg.topic()} : {msg.value()}")
-            except Exception as e:
-                logger.error(f"❌ Error processing message from topic {msg.topic()}: {e}")
-
     except Exception as e:
-        logger.error(f"❌ Kafka consumer error: {e}")
-    finally:
-        try:
-            # Close connection on exit
-            consumer.close()
-            logger.info("🛑 Kafka consumer closed.")
-        except:
-            pass
-
-# Create function for handling ride requests
-def _handle_ride_request(payload: dict):
-    logger.info(f" 🚗 -> ride request: ride_id={payload.get('ride_id')}")
-    # TODO: trigger matching, surge check, etc.
-
-def _handle_ride_event(payload: dict):
-    logger.info(f" 🚗 -> ride event: ride_id={payload.get('ride_id')} event_type={payload.get('event_type')}")
-    # TODO: update ride status in Redis/DB
-
-def _handle_driver_event(payload: dict):
-    logger.info(f" 🚗 -> driver event: driver_id={payload.get('driver_id')} event_type={payload.get('event_type')}")
-    # TODO: update driver location/availability
+        logger.warning(f"⚠️ Kafka producer initialization failed: {str(e)}. Kafka producer will be unavailable.")
+        return False
 
 # ----------------------------------------------------------------
-# Kafka Initialization (called from FastAPI lifespan)
+# Kafka Consumer Thread Management
 # ----------------------------------------------------------------
 
 _consumer_thread: Optional[threading.Thread] = None
+_consumer_instance = None # Store consumer instance for graceful shutdown
 
-async def initialize_kafka():
+async def initialize_kafka_consumer():
     """
-    Call this once from FastAPI lifespan startup.
-    Initialises the producer singleton and spawns the consumer task.
+    Initialize kafka consumer in background thread.
+    The consumer will run in a separate thread and will be stopped gracefully on shutdown.
     """
-    global _consumer_thread
+    global _consumer_thread, _consumer_instance
 
     try:
-        # 1. init the producer singleton (with existing framework in kafka_producer)
-        from app.services.kafka_producer import kafka_producer
+        from app.services.kafka_consumer import EventConsumer
         
-        # Kafka producer is already initialized
-        logger.info("🔌 Kafka producer initialized ready.")
+        # Get bootstrap servers from env
+        bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        logger.info(f"🔌 Initializing Kafka consumer with bootstrap servers: {bootstrap_servers}")
+
+        # Create the EventConsumer instance
+        _consumer_instance = EventConsumer(bootstrap_servers=bootstrap_servers)
+        logger.info("✅ Kafka consumer instance created successfully.")
 
         # Start consumer thread
-        bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
-        topics = ["driver-events", "ride-events", "ride-requests"]
-        group_id = "taxi-trip-backend"
-
         _consumer_thread = threading.Thread(
-            target=_consume_loop, 
-            args=(bootstrap_servers, topics, group_id), 
+            target=_consumer_instance.start,
             name="kafka-consumer",
             daemon=True
         )
         _consumer_thread.start()
         logger.info("🚀 Kafka consumer thread started.")
+        logger.info("🎧 Subscribed to topics: ride-requests, ride-events, driver-events, frontend-events")
+        return True
 
     except Exception as e:
         logger.error(f"❌ Kafka initialization failed: {e}")
+        return False
 
-async def shutdown_kafka():
+async def shutdown_kafka_consumer():
     """Shutdown Kafka consumer gracefully on FastAPI shutdown."""
-    global _consumer_thread
+    global _consumer_thread, _consumer_instance
 
-    try:
-        from app.services.kafka_producer import kafka_producer
-        kafka_producer.close()  # close producer connection if needed
-        logger.info("✅ Kafka producer connection closed.")
-    except Exception as e:
-        logger.warning(f"⚠️ Error closing Kafka producer: {e}")
+    if _consumer_instance:
+        try:
+            _consumer_instance.stop()
+        except Exception as e:
+            logger.warning(f"⚠️ Error stopping Kafka consumer: {e}")
 
     # Consumer thread will exit on its own since it's a daemon thread
     if _consumer_thread and _consumer_thread.is_alive():
         logger.info("🛑 Kafka consumer thread will be stopped on process exit.")
         _consumer_thread.join(timeout=5)
+        logger.info("✅ Kafka consumer thread stopped.")
 
+async def shutdown_kafka_producer():
+    """Shutdown Kafka producer gracefully on FastAPI shutdown."""
+    try:
+        from app.services.kafka_producer import kafka_producer
+        kafka_producer.close()
+        logger.info("✅ Kafka producer shutdown complete.")
+    except Exception as e:
+        logger.warning(f"⚠️ Error shutting down Kafka producer: {e}")
+
+# ================================================================
+# Main Initialization Functions (called from main.py lifespan)
+# ================================================================
+
+async def initialize_kafka():
+    """Initialize both kafka producer and consumer."""
+    logger.info("🔌 Initializing Kafka producer and consumer...")
+
+    producer_ok = await initialize_kafka_producer()
+    consumer_ok = await initialize_kafka_consumer()
+
+    if not producer_ok or not consumer_ok:
+        logger.warning("⚠️ Kafka initialization had issues. Check logs for details.")
+    else:
+        logger.info("✅ Kafka producer and consumer initialized successfully.")
+
+async def shutdown_kafka():
+    """Shutdown both kafka producer and consumer gracefully."""
+    logger.info("🛑 Shutting down Kafka producer and consumer...")
+
+    await shutdown_kafka_consumer()
+    await shutdown_kafka_producer()
     logger.info("✅ Kafka shutdown complete.")

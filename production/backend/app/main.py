@@ -33,10 +33,6 @@ from app.core.prometheus_metrics import REQUEST_COUNT, REQUEST_LATENCY, ACTIVE_R
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 
-# Databricks framework imports
-from app.api.routes import databricks
-from app.core.databricks_client import databricks_client
-
 # Evidently AI imports
 from app.api.routes import evidently
 
@@ -131,16 +127,6 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Kafka initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ Kafka initialization failed (non-critical): {e}")
-
-        # Step 4: Initialize Databricks
-        logger.info("[4/6] Initializing Databricks client...")
-        try:
-            if databricks_client.connected:
-                logger.info("✅ Databricks client initialized successfully")
-            else:
-                logger.warning("⚠️ Databricks client failed to connect (non-critical)")
-        except Exception as e:
-            logger.warning(f"⚠️ Databricks client initialization failed (non-critical): {e}")
 
         # Step 5: Initialize MLflow (non-blocking)
         logger.info("[5/6] Initializing MLflow...")
@@ -279,7 +265,6 @@ app.add_middleware(MetricsMiddleware)
 
 # Include routers
 logger.info("Registering API routes...")
-app.include_router(databricks.router, prefix="/api/databricks", tags=["databricks"])
 app.include_router(prediction.router, prefix="/api/predict", tags=["predictions"])
 app.include_router(ride.router, prefix="/api/rides", tags=["rides"])
 app.include_router(driver.router, prefix="/api/drivers", tags=["drivers"])

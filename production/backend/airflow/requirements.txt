@@ -4,5 +4,6 @@ psycopg2-binary==2.9.9
 pandas==2.1.4
 pyarrow==14.0.1
 kafka-python==2.2.15
-databricks-sql-connector==1.0.0
+duckdb==0.9.2
+confluent-kafka==2.3.0
 SQLAlchemy==2.0.45

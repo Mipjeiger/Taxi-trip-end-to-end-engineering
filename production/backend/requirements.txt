@@ -32,10 +32,6 @@ keras==2.15.0
 xgboost==2.0.2
 lightgbm==4.1.0
 
-# Databricks
-databricks-sdk==0.20.0
-databricks-sql-connector>=1.0.0
-
 # Evidently AI
 evidently>=0.7.0
 

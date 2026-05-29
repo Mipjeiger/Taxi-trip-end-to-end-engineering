@@ -21,7 +21,7 @@ load_dotenv(dotenv_path=ENV_PATH)
 # ================================================================
 
 try:
-    from confluent_kafka import Consumer, KafkaException
+    from confluent_kafka import Consumer, KafkaError
     KAFKA_AVAILABLE = True
 except ImportError:
     KAFKA_AVAILABLE = False
@@ -33,7 +33,7 @@ except ImportError:
 
 class EventConsumer:
     """
-    Kafka consumer: Frontend events -> Databricks SQL
+    Kafka consumer: Frontend events -> DuckDB
     Batches events every 100 messages or 30 seconds, whichever comes first.
     """
 
@@ -59,14 +59,19 @@ class EventConsumer:
                 "bootstrap.servers": self.bootstrap_servers,
                 "group.id": "events-to-duckdb",
                 "auto.offset.reset": "earliest",
+                "enable.auto.offset.store": False,  
                 "enable.auto.commit": False,  # Manual commit after batch is processed
                 "session.timeout.ms": 30000,
-                "max.poll.interval.ms": 300000
+                "max.poll.interval.ms": 300000,
+                "socket.timeout.ms": 60000,
+                "isolation.level": "read_committed" # Offset commit strategy to ensure we only read committed messages
             }
             
             self.consumer = Consumer(config)
             self.consumer.subscribe(self.TOPICS)
-            logger.info(f"✅ Kafka consumer connected and subscribed to topics: {self.TOPICS}")
+            logger.info(f"✅ Kafka consumer connected to: {self.bootstrap_servers}")
+            logger.info(f"   Topics: {self.TOPICS}")
+            logger.info(f"   Group ID: events-to-duckdb")
         except Exception as e:
             logger.error(f"❌ Failed to connect to Kafka: {e}")
             raise
@@ -87,8 +92,10 @@ class EventConsumer:
                     continue
 
                 if msg.error():
-                    if msg.error().code() == KafkaException._PARTITION_EOF:
-                        logger.info(f"Reached end of partition for topic {msg.topic()} partition {msg.partition()}")
+                    # Check for end of partition (not an error, just informational)
+                    error_code = msg.error().code()
+                    if error_code == KafkaError._PARTITION_EOF:
+                        logger.debug(f"✅ End of partition for {msg.topic()}[{msg.partition()}]")
                     else:
                         logger.error(f"❌ Kafka error: {msg.error()}")
                     continue

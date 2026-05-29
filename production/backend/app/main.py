@@ -23,7 +23,7 @@ from app.api.dependencies import (
 
 # Redis & MLflow imports
 from app.core.redis_client import get_redis, close_redis
-from app.startup import initialize_mlflow, initialize_kafka, shutdown_kafka
+from app.startup import initialize_mlflow, initialize_kafka, shutdown_kafka, initialize_duckdb
 
 # Kafka producer & consumer
 from app.services.kafka_producer import kafka_producer
@@ -127,6 +127,14 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Kafka initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ Kafka initialization failed (non-critical): {e}")
+
+        # Step 4: Initialize DuckDB (Creates tables automatically)
+        logger.info("[4/6] Initializing DuckDB...")
+        try:
+            await initialize_duckdb()
+            logger.info("✅ DuckDB initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ DuckDB initialization failed: {e}")
 
         # Step 5: Initialize MLflow (non-blocking)
         logger.info("[5/6] Initializing MLflow...")

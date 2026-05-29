@@ -90,7 +90,7 @@ async def initialize_kafka_consumer():
         from app.services.kafka_consumer import EventConsumer
         
         # Get bootstrap servers from env
-        bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
         logger.info(f"🔌 Initializing Kafka consumer with bootstrap servers: {bootstrap_servers}")
 
         # Create the EventConsumer instance
@@ -160,3 +160,35 @@ async def shutdown_kafka():
     await shutdown_kafka_consumer()
     await shutdown_kafka_producer()
     logger.info("✅ Kafka shutdown complete.")
+
+# ================================================================
+#  DuckDB initialization
+# ================================================================
+async def initialize_duckdb():
+    """Initialize DuckDB and create schema"""
+    try:
+        from app.core.duckdb_client import duckdb_client
+
+        if not duckdb_client.connected:
+            raise Exception("DuckDB client is not connected.")
+        
+        # Verify tables exist
+        tables = duckdb_client.conn.execute(
+            "SELECT table_name FROM information_schema.tables"
+        ).fetchall()
+
+        table_names = [t[0] for t in tables]
+        logger.info(f"✅ DuckDB tables initialized: {table_names}")
+
+        # Check row counts
+        for table_name in table_names:
+            count = duckdb_client.conn.execute(
+                f"SELECT COUNT(*) FROM {table_name}"
+            ).fetchone()[0]
+            logger.info(f"   - {table_name}: {count} rows")
+
+        return True
+    
+    except Exception as e:
+        logger.error(f"❌ DuckDB initialization failed: {e}")
+        return False

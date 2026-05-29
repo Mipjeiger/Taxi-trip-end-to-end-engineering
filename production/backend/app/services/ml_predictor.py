@@ -3,7 +3,6 @@ import numpy as np
 import pickle
 from typing import Dict, Optional
 from pathlib import Path
-from tensorflow.keras.models import load_model
 from datetime import datetime, timedelta
 from app.core.redis_client import redis_get, redis_set
 from app.core.database import get_supabase_connection
@@ -54,16 +53,18 @@ class MLPredictor:
             else:
                 logger.warning("⚠️ Primary ML models not found. Will attempt to load fallback TensorFlow models.")
             
+            """Later to add fallback Tensorflow models if needed for deployment redundancy - currently
+                not included to save space and complexity."""
             # Fallback models (Return to TensorFlow models - for deployment redundancy)
-            time_nn_path = self.models_path / "model_time_improved.keras"
-            price_nn_path = self.models_path / "model_price_improved.keras"
+            #time_nn_path = self.models_path / "model_time_improved.keras"
+            #price_nn_path = self.models_path / "model_price_improved.keras"
 
-            if time_nn_path.exists() and price_nn_path.exists():
-                self.models['ctat_fallback'] = load_model(time_nn_path)
-                self.models['vtat_fallback'] = load_model(price_nn_path)
-                logger.info("✅ Loaded fallback TensorFlow models")
-            else:
-                logger.warning("⚠️ Fallback TensorFlow models not found. Prediction will fail if primary models are missing.")
+            #if time_nn_path.exists() and price_nn_path.exists():
+            #    self.models['ctat_fallback'] = load_model(time_nn_path)
+            #    self.models['vtat_fallback'] = load_model(price_nn_path)
+            #    logger.info("✅ Loaded fallback TensorFlow models")
+            #else:
+            #    logger.warning("⚠️ Fallback TensorFlow models not found. Prediction will fail if primary models are missing.")
 
             # Scalers
             scaler_ultra_path = self.models_path / "scaler_ultra.pkl"

@@ -121,7 +121,6 @@ def extract_parquet_data(**context):
 # Task 2: Transform Data
 # ================================================================
 
-
 def transform_data(**context):
     """Transform and feature engineer taxi ride data"""
 

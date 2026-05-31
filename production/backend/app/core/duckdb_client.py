@@ -20,34 +20,42 @@ if not ENV_PATH.exists():
 load_dotenv(dotenv_path=ENV_PATH)
 
 class DuckDBClient:
-    """DuckDB client for data warehouse and analytics"""
+    """
+    DuckDB client for data warehouse and analytics.
+    Uses per-operation connections so the file lock is released
+    between writes — allowing DuckDB UI to connect simultaneously.
+    """
 
     def __init__(self):
         self.db_path = os.getenv("DUCKDB_PATH", "/data/taxi_trip.duckdb")
         self.sql_init_path = Path(__file__).resolve().parent.parent.parent / "sql" / "init_duckdb.sql"
-        self.conn: Optional[duckdb.DuckDBPyConnection] = None
         self.connected = False
         self._initialize()
 
+    def _get_conn(self) -> duckdb.DuckDBPyConnection:
+        """Open a fresh read-write connection. Caller is responsible for closing it."""
+        return duckdb.connect(self.db_path)
+
     def _initialize(self):
-        """Initialize DuckDB connection and create tables from SQL file"""
+        """Run the SQL init script once at startup, then immediately
+        close the connection so no permanent lock is held."""
         try:
             # Ensure database directory exists
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
             # Connect to DuckDB
-            self.conn = duckdb.connect(self.db_path)
+            with self._get_conn() as con:
+                self._create_tables_from_sql(con)
+
             self.connected = True
             logger.info(f"✅ Connected to DuckDB at {self.db_path}")
 
-            # Create tables from SQL file
-            self._create_tables_from_sql()
         except Exception as e:
             logger.error(f"❌ Failed to initialize DuckDB client: {e}")
             self.connected = False
             raise
 
-    def _create_tables_from_sql(self):
+    def _create_tables_from_sql(self, con: duckdb.DuckDBPyConnection):
         """Load and execute SQL statements from a file to create tables"""
         try:
             if not self.sql_init_path.exists():
@@ -59,7 +67,7 @@ class DuckDBClient:
                 sql_script = f.read()
 
             # Execute SQL script
-            self.conn.execute(sql_script)
+            con.execute(sql_script)
             logger.info(f"✅ Successfully executed SQL initialization script from {self.sql_init_path}")
 
         except Exception as e:
@@ -70,28 +78,40 @@ class DuckDBClient:
                      event_data: Dict, event_timestamp: float):
         """Insert an event into the events table"""
         try:
-            self.conn.execute("""
-                INSERT INTO taxi_trip_data_events
-                              (event_type, user_id, topic, event_data, event_timestamp)
-                              VALUES (?, ?, ?, ?, ?)
-                              """, [event_type, user_id, topic, str(event_data), event_timestamp])
+            with self._get_conn() as con:
+                con.execute("""
+                    INSERT INTO taxi_trip_data_events
+                                  (event_type, user_id, topic, event_data, event_timestamp)
+                                  VALUES (?, ?, ?, ?, ?)
+                                  """, [event_type, user_id, topic, str(event_data), event_timestamp])
             return True
         except Exception as e:
             logger.error(f"❌ Failed to insert event into DuckDB: {e}")
             return False
         
-    def insert_batch_events(self, events: List[Dict]):
-        """Insert batch of events"""
+    def insert_batch_events(self, events: List[Dict]) -> bool:
+        """Insert a batch of Kafka events in a single connection/transaction.
+        Much faster than one connection per event."""
         try:
-            for event in events:
-                self.insert_event(
-                    event_type=event.get("event_type"),
-                    user_id=event.get("user_id"),
-                    topic=event.get("topic"),
-                    event_data=event.get("event_data"),
-                    event_timestamp=event.get("event_timestamp")
+            with self._get_conn() as con:
+                con.executemany(
+                    """
+                    INSERT INTO taxi_trip_data_events
+                        (event_type, user_id, topic, event_data, event_timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    [
+                        [
+                            event.get("event_type"),
+                            event.get("user_id"),
+                            event.get("topic"),
+                            str(event.get("event_data", {})),
+                            event.get("event_timestamp"),
+                        ]
+                        for event in events
+                    ],
                 )
-            logger.info(f"✅ Inserted batch of {len(events)} events into DuckDB")
+            logger.info(f"✅ Inserted batch of {len(events)} events into DuckDB.")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to insert batch events into DuckDB: {e}")
@@ -102,42 +122,56 @@ class DuckDBClient:
                                prompt_embedding: List[float] = None, response_embedding: List[float] = None):
         """Insert an LLM interaction with embeddings for semantic search"""
         try:
-            self.conn.execute("""
-                INSERT INTO llm_interactions
-                (user_id, session_id, prompt, response, response_time_ms, tokens_used, cost,
-                prompt_embedding, response_embedding)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, [user_id, session_id, prompt, response, response_time_ms, tokens_used, cost,
+            with self._get_conn() as con:
+                con.execute("""
+                    INSERT INTO llm_interactions
+                    (user_id, session_id, prompt, response, response_time_ms, tokens_used, cost,
+                    prompt_embedding, response_embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, [user_id, session_id, prompt, response, response_time_ms, tokens_used, cost,
                       prompt_embedding, response_embedding])
             return True
         except Exception as e:
             logger.error(f"❌ Failed to insert LLM interaction into DuckDB: {e}")
             return False
-        
+    
+    # --- Read Operations ---
     def query(self, sql: str) -> List[Dict]:
-        """Execute SQL query and return results as list of dicts"""
+        """Return summary counts and averages across all tables.
+        The sql parameter is kept for API compatibility but not used —
+        summary stats are always returned."""
         try:
-            result = {
-                "total_events": self.conn.execute("SELECT COUNT(*) FROM taxi_trip_data_events").fetchone()[0],
-                "total_rides": self.conn.execute("SELECT COUNT(*) FROM rides").fetchone()[0],
-                "total_drivers": self.conn.execute("SELECT COUNT(*) FROM drivers").fetchone()[0],
-                "total_llm_interactions": self.conn.execute("SELECT COUNT(*) FROM llm_interactions").fetchone()[0],
-                "avg_fare": self.conn.execute("SELECT AVG(actual_fare) FROM rides WHERE actual_fare IS NOT NULL").fetchone()[0],
-                "avg_rating": self.conn.execute("SELECT AVG(rating) FROM drivers WHERE rating IS NOT NULL").fetchone()[0]
-                }
+            with self._get_conn() as con:
+                result = {
+                    "total_events": con.execute("SELECT COUNT(*) FROM taxi_trip_data_events").fetchone()[0],
+                    "total_rides": con.execute("SELECT COUNT(*) FROM rides").fetchone()[0],
+                    "total_drivers": con.execute("SELECT COUNT(*) FROM drivers").fetchone()[0],
+                    "total_llm_interactions": con.execute("SELECT COUNT(*) FROM llm_interactions").fetchone()[0],
+                    "avg_fare": con.execute("SELECT AVG(actual_fare) FROM rides WHERE actual_fare IS NOT NULL").fetchone()[0],
+                    "avg_rating": con.execute("SELECT AVG(rating) FROM drivers WHERE rating IS NOT NULL").fetchone()[0]
+                    }
             return result
         except Exception as e:
             logger.error(f"❌ Failed to execute query on DuckDB: {e}")
             return {}
         
-    def close(self):
-        """Close DuckDB connection"""
+    def raw_query(self, sql: str) -> List[Dict]:
+        """Run any arbitrary SQL and return results as a list of dicts.
+        Used by analytics routes."""
         try:
-            if self.conn:
-                self.conn.close()
-                logger.info("✅ DuckDB connection closed.")
+            with self._get_conn() as con:
+                result = con.execute(sql)
+                columns = [desc[0] for desc in result.description]
+                rows = result.fetchall()
+                return [dict(zip(columns, row)) for row in rows]
         except Exception as e:
-            logger.error(f"❌ Failed to close DuckDB connection: {e}")
+            logger.error(f"❌ Failed to execute raw query on DuckDB: {e}")
+            return []
+        
+    def close(self):
+        """No persistent connection to close.
+        Called by shutdown handler for compatibility."""
+        logger.info("✅ DuckDB connection closed.")
 
 # Singleton instance of DuckDBClient for application-wide use
 duckdb_client = DuckDBClient()

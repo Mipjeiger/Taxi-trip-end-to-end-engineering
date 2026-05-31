@@ -1,5 +1,3 @@
--- Active: 1770487880142@@127.0.0.1@5432
--- Active: 1770487880142@@127.0.0.1@5432
 -- taxi_trip_data_events: stores all Kafka events
 CREATE TABLE IF NOT EXISTS taxi_trip_data_events (
     event_id     UUID      DEFAULT gen_random_uuid() PRIMARY KEY,

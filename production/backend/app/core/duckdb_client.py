@@ -9,11 +9,11 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = BASE_DIR.parent / '.env'
+ENV_PATH = BASE_DIR / '.env'
 logger.info(f"✅ Loaded environtment variables from: {ENV_PATH}")
 
 if not ENV_PATH.exists():
-    ENV_PATH = BASE_DIR / '.env'
+    ENV_PATH = BASE_DIR.parent / '.env'
     logging.debug(f"⚠️ .env file not found at {ENV_PATH}, trying fallback location: {ENV_PATH}")
 
 # Load .env variables   

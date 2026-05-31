@@ -15,11 +15,11 @@ logging.basicConfig(level=logging.INFO)
 
 # Load env
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = BASE_DIR.parent / '.env'
+ENV_PATH = BASE_DIR / '.env'
 logging.info(f"✅ Loaded environtment variables from: {ENV_PATH}")
 
 if not ENV_PATH.exists():
-    ENV_PATH = BASE_DIR / '.env'
+    ENV_PATH = BASE_DIR.parent / '.env'
     logging.warning(f"⚠️ .env file not found at {ENV_PATH}, trying fallback location: {ENV_PATH}")
 
 load_dotenv(dotenv_path=ENV_PATH)
@@ -172,12 +172,22 @@ async def initialize_duckdb():
         if not duckdb_client.connected:
             raise Exception("❌ DuckDB client is not connected.")
         
-        table_info = duckdb_client.get_table_info()
-        logger.info(f"✅ DuckDB initialized with tables: {list(table_info.keys())}")
+        # Verify connection in postgresql to duckdb
+        with duckdb_client._get_conn() as con:
+            tables = con.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+            ).fetchall()
 
-        # Loop through tables and log row counts
-        for table_name, count in table_info.items():
-            logger.info(f"   - {table_name}: {count} rows")
+            table_names = [t[0] for t in tables]
+            logger.info(f"✅ DuckDB tables initialized: {table_names}")
+
+            # Check row counts for sanity check
+            for table_name in table_names:
+                try:
+                    count = con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                    logger.info(f"   - {table_name}: {count} rows")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not count rows for {table_name}: {e}")
 
         return True
     

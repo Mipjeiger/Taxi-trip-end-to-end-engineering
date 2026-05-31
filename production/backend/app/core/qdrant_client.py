@@ -31,7 +31,7 @@ class QdrantVectorDB:
 
         # Collection configuration
         self.LLM_PROMPTS_COLLECTION = "llm_prompts"
-        self.RIDE_REQUESTS_COLLECTION = "ride_requests"
+        self.TRIP_REQUESTS_COLLECTION = "trip_requests"
         self.DRIVER_PROFILES_COLLECTION = "driver_profiles"
 
         self._initialize()
@@ -68,11 +68,11 @@ class QdrantVectorDB:
                 description="LLM prompts and responses with semantic embeddings"
             )
 
-            # Ride requests collection
+            # Trip requests collection
             self._create_collections(
-                self.RIDE_REQUESTS_COLLECTION,
+                self.TRIP_REQUESTS_COLLECTION,
                 vector_size=768,
-                description="Ride request descriptions with semantic embeddings"
+                description="Trip request descriptions with semantic embeddings"
             )
 
             # Driver profiles collection
@@ -137,13 +137,13 @@ class QdrantVectorDB:
         """Semantic search for LLM interactions based on query embedding"""
         try:
             results = self.client.search(
-                collection_name=self.RIDE_REQUESTS_COLLECTION,
+                collection_name=self.TRIP_REQUESTS_COLLECTION,
                 query_vector=query_embedding,
                 limit=limit,
                 score_threshold=0.7
             )
 
-            return [{"ride_id": hit.payload.get("ride_id"), "similarity": hit.score}
+            return [{"trip_id": hit.payload.get("trip_id"), "similarity": hit.score}
                     for hit in results]
         except Exception as e:
             logger.error(f"❌ Failed to perform semantic search in Qdrant: {e}")

@@ -266,7 +266,7 @@ def load_to_duckdb(**context):
 
         conn.execute(
             """
-            INSERT INTO rides
+            INSERT INTO trip
             SELECT
                 ride_id,
                 rider_id,
@@ -290,13 +290,13 @@ def load_to_duckdb(**context):
         )
 
         inserted_rows = len(df)
-        logger.info(f"✅ Inserted {inserted_rows} rows into rides table")
+        logger.info(f"✅ Inserted {inserted_rows} rows into ride table")
 
         conn.close()
 
         return {
             "rows_loaded": inserted_rows,
-            "table": "rides",
+            "table": "ride",
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -412,7 +412,7 @@ def data_quality_checks(**context):
         # Total Rows Check
         # ========================================================
 
-        total_rows = conn.execute("SELECT COUNT(*) FROM rides").fetchone()[0]
+        total_rows = conn.execute("SELECT COUNT(*) FROM ride").fetchone()[0]
         logger.info(f"✅ Total rides rows: {total_rows}")
 
         # ========================================================
@@ -424,7 +424,7 @@ def data_quality_checks(**context):
                 SUM(CASE WHEN ride_id IS NULL THEN 1 ELSE 0 END) AS null_ride_id,
                 SUM(CASE WHEN rider_id IS NULL THEN 1 ELSE 0 END) AS null_rider_id,
                 SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver_id
-            FROM rides
+            FROM ride
             """
         ).fetchone()
 
@@ -444,7 +444,7 @@ def data_quality_checks(**context):
         invalid_fares = conn.execute(
             """
             SELECT COUNT(*)
-            FROM rides
+            FROM ride
             WHERE actual_fare < 0
                OR actual_fare IS NULL
             """

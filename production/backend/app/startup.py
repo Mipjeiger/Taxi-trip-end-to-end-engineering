@@ -175,7 +175,10 @@ async def initialize_duckdb():
         # Verify connection in postgresql to duckdb
         with duckdb_client._get_conn() as con:
             tables = con.execute(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+                "SELECT table_name " \
+                "FROM information_schema.tables " \
+                "WHERE table_schema='memory' " \
+                "AND table_type='BASE TABLE'"
             ).fetchall()
 
             table_names = [t[0] for t in tables]
@@ -189,8 +192,9 @@ async def initialize_duckdb():
                 except Exception as e:
                     logger.warning(f"⚠️ Could not count rows for {table_name}: {e}")
 
+        logger.info("✅ DuckDB initialization complete.")
         return True
     
     except Exception as e:
-        logger.error(f"❌ DuckDB initialization failed: {e}")
+        logger.error(f"❌ DuckDB initialization failed: {e}", exc_info=True)
         return False

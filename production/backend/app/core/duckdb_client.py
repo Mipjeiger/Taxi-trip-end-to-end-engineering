@@ -66,9 +66,33 @@ class DuckDBClient:
             with open(self.sql_init_path, "r") as f:
                 sql_script = f.read()
 
-            # Execute SQL script
-            con.execute(sql_script)
-            logger.info(f"✅ Successfully executed SQL initialization script from {self.sql_init_path}")
+            # Split by semicolon to execute statements one by one (optional, but can help with error isolation)
+            statements = [stmt.strip() for stmt in sql_script.split(";") if stmt.strip()]
+
+            # Add logic count statement
+            failed_count = 0
+            success_count = 0
+            
+            for i, statement in enumerate(statements, 1):
+                if statement.startswith("--"):
+                    continue  # Skip comments
+
+                try:
+                    con.execute(statement)
+                    success_count += 1
+                    logger.debug(f"✅ Successfully executed SQL statement {i}/{len(statements)}")
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"❌ Failed to execute SQL statement: {statement}\nError: {e}")
+                    
+                    # Don't continue on CREATE TABLE errors - fail fast
+                    if "CREATE TABLE" in statement.upper():
+                        raise
+
+            logger.info(f"✅ Successfully executed {success_count} SQL statements (failed: {failed_count})")
+
+            if failed_count > 0:
+                logger.warning(f"⚠️ {failed_count} statements failed but not critical")
 
         except Exception as e:
             logger.error(f"❌ Failed to create tables from SQL file: {e}")
@@ -144,10 +168,10 @@ class DuckDBClient:
             with self._get_conn() as con:
                 result = {
                     "total_events": con.execute("SELECT COUNT(*) FROM taxi_trip_data_events").fetchone()[0],
-                    "total_rides": con.execute("SELECT COUNT(*) FROM rides").fetchone()[0],
+                    "total_ride": con.execute("SELECT COUNT(*) FROM trip").fetchone()[0],
                     "total_drivers": con.execute("SELECT COUNT(*) FROM drivers").fetchone()[0],
                     "total_llm_interactions": con.execute("SELECT COUNT(*) FROM llm_interactions").fetchone()[0],
-                    "avg_fare": con.execute("SELECT AVG(actual_fare) FROM rides WHERE actual_fare IS NOT NULL").fetchone()[0],
+                    "avg_fare": con.execute("SELECT AVG(actual_fare) FROM trip WHERE actual_fare IS NOT NULL").fetchone()[0],
                     "avg_rating": con.execute("SELECT AVG(rating) FROM drivers WHERE rating IS NOT NULL").fetchone()[0]
                     }
             return result

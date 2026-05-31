@@ -11,7 +11,7 @@ router = APIRouter()
 class SemanticSearchRequest(BaseModel):
     query_embedding: List[float]
     limit: int = 5
-    search_type: str = "llm" # llm, rides, driver
+    search_type: str = "llm" # llm, trip, driver
 
 class SemanticSearchResponse(BaseModel):
     results: List[dict]
@@ -27,15 +27,15 @@ async def semantic_search_health():
 
 @router.post("/search")
 async def semantic_search(request: SemanticSearchRequest) -> SemanticSearchResponse:
-    """Semantic search through LLM interactions or ride requests"""
+    """Semantic search through LLM interactions or trip requests"""
     try:
         if request.search_type == "llm":
             results = qdrant_client.semantic_search_llm(
                 query_embedding=request.query_embedding,
                 limit=request.limit
             )
-        elif request.search_type == "rides":
-            results = qdrant_client.find_similar_rides(
+        elif request.search_type == "trip":
+            results = qdrant_client.find_similar_trips(
                 query_embedding=request.query_embedding,
                 limit=request.limit
             )

@@ -107,7 +107,6 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/models:/app/models:ro
-      - ./backend/database:/backend/database
       - duckdb_data:/data
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     depends_on:
@@ -246,7 +245,6 @@ services:
       - ./backend/airflow/plugins:/opt/airflow/plugins
       - ./backend/airflow/config:/opt/airflow/config
       - airflow_logs_volume:/opt/airflow/logs
-      - ./backend/database:/backend/database
       - duckdb_data:/data
     ports:
       - "8080:8080"
@@ -306,7 +304,6 @@ services:
       - ./backend/airflow/plugins:/opt/airflow/plugins
       - ./backend/airflow/config:/opt/airflow/config
       - airflow_logs_volume:/opt/airflow/logs
-      - ./backend/database:/backend/database
       - duckdb_data:/data
     command: bash -c "airflow db migrate && airflow scheduler"
     depends_on:

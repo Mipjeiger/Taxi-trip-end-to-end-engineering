@@ -32,25 +32,6 @@ services:
       - taxi_trip_network
     restart: unless-stopped
 
-  # DuckDB for analytical queries and data exploration
-  duckdb:
-    image: ghcr.io/caioricciuti/duck-ui:latest
-    container_name: duckdb-ui
-    ports:
-      - "5522:5522"
-    volumes:
-      - duckdb_data:/data
-    environment:
-      - DUCK_UI_ALLOW_UNSIGNED_EXTENSIONS=true
-    networks:
-      - taxi_trip_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5522/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-
   # MLflow for experiment tracking and model management
   mlflow:
     image: ghcr.io/mlflow/mlflow:latest
@@ -74,6 +55,28 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  # PostgreSQL connection for Metabase configuration
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_database:/var/lib/postgresql/data
+      - ./backend/sql/init_analytics.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    networks:
+      - taxi_trip_network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   # Backend FastAPI service
   backend:
@@ -99,18 +102,23 @@ services:
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       DATA_SOURCE_PATH: ${DATA_SOURCE_PATH}
-      DUCKDB_PATH: ${DUCKDB_PATH}
       QDRANT_API_KEY: ${QDRANT_API_KEY}
       QDRANT_CLUSTER_URL: ${QDRANT_CLUSTER_URL}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
       - ./backend/models:/app/models:ro
-      - duckdb_data:/data
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/metrics"]
@@ -145,6 +153,31 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Metabase - for UI postgresql to visualize data and create dashboards
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    ports:
+      - "3001:3001"   
+    volumes:
+      - metabase_data:/metabase-data
+    environment:
+      MD_DB_TYPE: h2
+      MD_DB_FILE: /metabase-data/metabase.db
+      MD_PORT: 3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - taxi_trip_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   # Prometheus for monitoring
   prometheus:
@@ -236,8 +269,12 @@ services:
       SUPABASE_DB: ${SUPABASE_DB}
       SUPABASE_USER: ${SUPABASE_USER}
       SUPABASE_PASSWORD: ${SUPABASE_PASSWORD}
-      # DuckDB and Qdrant for Airflow tasks
-      DUCKDB_PATH: ${DUCKDB_PATH}
+      # PostgreSQL connection for Airflow metadata database
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
       PARQUET_PATH: ${PARQUET_PATH}
       TEMP_DIR: /tmp/airflow_taxi_pipeline
     volumes:
@@ -245,7 +282,6 @@ services:
       - ./backend/airflow/plugins:/opt/airflow/plugins
       - ./backend/airflow/config:/opt/airflow/config
       - airflow_logs_volume:/opt/airflow/logs
-      - duckdb_data:/data
     ports:
       - "8080:8080"
     command: bash -c "airflow db migrate && airflow webserver"
@@ -295,8 +331,12 @@ services:
       SUPABASE_DB: ${SUPABASE_DB}
       SUPABASE_USER: ${SUPABASE_USER}
       SUPABASE_PASSWORD: ${SUPABASE_PASSWORD}
-      # DuckDB for Airflow metadata and task results
-      DUCKDB_PATH: ${DUCKDB_PATH}
+      # PostgreSQL connection for Airflow metadata database
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: ${POSTGRES_HOST}
       PARQUET_PATH: ${PARQUET_PATH}
       TEMP_DIR: /tmp/airflow_taxi_pipeline
     volumes:
@@ -304,7 +344,6 @@ services:
       - ./backend/airflow/plugins:/opt/airflow/plugins
       - ./backend/airflow/config:/opt/airflow/config
       - airflow_logs_volume:/opt/airflow/logs
-      - duckdb_data:/data
     command: bash -c "airflow db migrate && airflow scheduler"
     depends_on:
       airflow-db:
@@ -443,12 +482,13 @@ services:
       
 volumes:
   postgres_data:
+  postgres_database:
   redis_data:
   redisinsight_data:
-  duckdb_data:
   mlflow_data:
   prometheus_data:
   grafana_data:
+  metabase_data:
   airflow_db_data:
   airflow_logs_volume:
   zookeeper_data:

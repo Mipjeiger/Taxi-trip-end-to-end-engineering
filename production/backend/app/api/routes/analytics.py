@@ -1,9 +1,14 @@
 import logging
 from fastapi import APIRouter, HTTPException
 from app.core.duckdb_client import duckdb_client
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+class QueryRequest(BaseModel):
+    """Request body for executing custom SQL query"""
+    sql: str
 
 @router.get("/health")
 async def anyltics_health():
@@ -13,32 +18,33 @@ async def anyltics_health():
         "status": "✅ Connected to DuckDB" if duckdb_client.connected else "❌ Not connected to DuckDB"
     }
 
-@router.get("/events")
-async def get_events(limit: int = 100):
-    """Retrieve recent events from DuckDB for analytics"""
+@router.post("/duckdb/query")
+async def run_query(req: QueryRequest):
+    """Run a custom SQL query against DuckDB and return results"""
     try:
-        events = duckdb_client.query(f"SELECT * FROM taxi_trip_data_events LIMIT {limit}")
-        return {"count": len(events), "events": events}
+        result = duckdb_client.raw_query(req.sql)
+        return {"data": result, "rows": len(result)}
     except Exception as e:
-        logger.error(f"❌ Failed to retrieve events from DuckDB: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve events from DuckDB")
+        raise HTTPException(status_code=400, detail=f"Error executing query: {e}")
     
-@router.get("/analytics")
-async def get_analytics():
-    """Get key metrics from DuckDB for analytics dashboard"""
+@router.get("/duckdb/tables")
+async def list_tables():
+    """List all tables in DuckDB"""
+    result = duckdb_client.raw_query("SHOW TABLES")
+    return {"tables": result}
+
+@router.get("/duckdb/summary")
+async def summary():
+    """Get a summary of the DuckDB database"""
     try:
-        analytics = duckdb_client.get_analytics()
-        return analytics
+        tables = duckdb_client.raw_query("SHOW TABLES")
+        summary = {}
+
+        for table in tables:
+            table_name = table[0]
+            count_result = duckdb_client.raw_query(f"SELECT COUNT(*) FROM {table_name}")
+            summary[table_name] = count_result[0][0]
+        
+        return {"summary": summary}
     except Exception as e:
-        logger.error(f"❌ Failed to retrieve analytics from DuckDB: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve analytics from DuckDB")
-    
-@router.post("/query")
-async def execute_query(sql: str):
-    """Execute custom SQL query on DuckDB"""
-    try:
-        result = duckdb_client.query(sql)
-        return {"result": result}
-    except Exception as e:
-        logger.error(f"❌ Failed to execute query on DuckDB: {e}")
-        raise HTTPException(status_code=500, detail="Failed to execute query on DuckDB")
+        raise HTTPException(status_code=400, detail=f"Error generating summary: {e}")

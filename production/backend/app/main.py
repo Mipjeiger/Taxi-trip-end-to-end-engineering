@@ -35,6 +35,7 @@ from fastapi.responses import Response
 
 # Evidently AI imports
 from app.api.routes import evidently
+from app.api.routes.analytics import router as analytics_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -280,6 +281,7 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"]
 app.include_router(recommendations.router, prefix="/api/recommend", tags=["recommendations"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(evidently.router, prefix="/api/evidently", tags=["evidently"])
+app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
 logger.info("✅ All routes registered successfully")
 
 # ========== ENDPOINTS ==========

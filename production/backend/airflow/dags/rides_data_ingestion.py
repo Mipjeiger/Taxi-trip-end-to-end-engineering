@@ -207,7 +207,6 @@ def transform_data(**context):
 # Task 3: Load Into DuckDB
 # ================================================================
 
-
 def load_to_duckdb(**context):
     """Load transformed data into DuckDB"""
 

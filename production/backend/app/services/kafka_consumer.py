@@ -135,7 +135,6 @@ class EventConsumer:
             return
         
         try:
-            from app.core.duckdb_client import duckdb_client
 
             # Insert to DuckDB
             duckdb_client.insert_batch_events(self._batch)

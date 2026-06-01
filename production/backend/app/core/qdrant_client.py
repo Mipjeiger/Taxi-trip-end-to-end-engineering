@@ -7,7 +7,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
 logger = logging.getLogger(__name__)
-
+logging.basicConfig(level=logging.INFO)
 # Load environment variables
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = BASE_DIR.parent / '.env'

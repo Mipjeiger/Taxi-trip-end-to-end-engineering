@@ -23,7 +23,7 @@ from app.api.dependencies import (
 
 # Redis & MLflow imports
 from app.core.redis_client import get_redis, close_redis
-from app.startup import initialize_mlflow, initialize_kafka, shutdown_kafka, initialize_duckdb
+from app.startup import initialize_mlflow, initialize_kafka, shutdown_kafka
 
 # Kafka producer & consumer
 from app.services.kafka_producer import kafka_producer
@@ -112,41 +112,33 @@ async def lifespan(app: FastAPI):
     
     try:
         # Step 1: Initialize database
-        logger.info("[1/6] Initializing database...")
+        logger.info("[1/5] Initializing database...")
         await init_db()
         logger.info("✅ Database initialized successfully")
 
         # Step 2: Initialize Redis
-        logger.info("[2/6] Initializing Redis...")
+        logger.info("[2/5] Initializing Redis...")
         redis_client = await get_redis()
         logger.info("✅ Redis initialized successfully")
 
         # Step 3: Initialize Kafka
-        logger.info("[3/6] Initializing Kafka...")
+        logger.info("[3/5] Initializing Kafka...")
         try:
             await initialize_kafka()
             logger.info("✅ Kafka initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ Kafka initialization failed (non-critical): {e}")
 
-        # Step 4: Initialize DuckDB (Creates tables automatically)
-        logger.info("[4/6] Initializing DuckDB...")
-        try:
-            await initialize_duckdb()
-            logger.info("✅ DuckDB initialized successfully")
-        except Exception as e:
-            logger.error(f"❌ DuckDB initialization failed: {e}")
-
-        # Step 5: Initialize MLflow (non-blocking)
-        logger.info("[5/6] Initializing MLflow...")
+        # Step 4: Initialize MLflow (non-blocking)
+        logger.info("[4/5] Initializing MLflow...")
         try:
             await initialize_mlflow()
             logger.info("✅ MLflow initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ MLflow initialization failed (non-critical): {e}")
 
-        # Step 6: Load ML models
-        logger.info("[6/6] Loading ML models...")
+        # Step 5: Load ML models
+        logger.info("[5/5] Loading ML models...")
         try:
             ml_predictor = MLPredictor()
             await ml_predictor.load_models()
@@ -155,107 +147,62 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"❌ ML model loading failed: {e}")
             ml_predictor = None
-            raise
 
+        # Step 6: Intialize PostgreSQL connection for analytics
 
-        # Step 7: Initialize recommender services
-        logger.info("[7/7] Initializing recommender services...")
+        # Load recommendation models
+        logger.info("Loading recommendation models...")
         try:
-            vehicle_recommender = VehicleRecommender(redis_client)
-            set_vehicle_recommender(vehicle_recommender)
-            logger.info("  ✅ Vehicle recommender initialized")
-            
-            surge_recommender = SurgeRecommender(redis_client)
-            set_surge_recommender(surge_recommender)
-            logger.info("  ✅ Surge recommender initialized")
-            
+            vehicle_recommender = VehicleRecommender()
+            surge_recommender = SurgeRecommender()
             churn_recommender = ChurnRecommender()
+            matching_recommender = MatchingRecommender()
+            
+            set_vehicle_recommender(vehicle_recommender)
+            set_surge_recommender(surge_recommender)
             set_churn_recommender(churn_recommender)
-            logger.info("  ✅ Churn recommender initialized")
-            
-            matching_recommender = MatchingRecommender(redis_client)
             set_matching_recommender(matching_recommender)
-            logger.info("  ✅ Matching recommender initialized")
-        except Exception as e:
-            logger.error(f"❌ Recommender initialization failed: {e}")
-            raise
             
-        # Create logic to call _consumer_thread by intialize_kafka_consumer()
-        try:
-            from app.startup import initialize_kafka_consumer
-
-            # Start kafka consumer in background thread
-            kafka_consumer = await initialize_kafka_consumer()
-            if kafka_consumer:
-                logger.info("✅ Kafka consumer initialized and running in background thread")
-        except:
-            logger.warning("❌ Kafka consumer failed to initialize (non-critical)")
-            raise
-
-        # Step 8: Verify all services
-        logger.info("[8/8] Verifying all services...")
-        services_status = {
-            "Database": "✅" if init_db else "❌",
-            "Redis": "✅" if redis_client else "❌",
-            "Kafka Producer": "✅" if kafka_producer.connected else "⚠️ degraded",
-            "Kafka Consumer": "✅" if kafka_consumer else "⚠️ not running",
-            "MLflow": "✅" if initialize_mlflow else "❌",
-            "ML Models": "✅" if ml_predictor else "❌",
-            "Vehicle Recommender": "✅" if vehicle_recommender else "❌",
-            "Surge Recommender": "✅" if surge_recommender else "❌",
-            "Churn Recommender": "✅" if churn_recommender else "❌",
-            "Matching Recommender": "✅" if matching_recommender else "❌",
-        }
-        for service, status in services_status.items():
-            logger.info(f"  {status} {service}")
+            logger.info("✅ Recommendation models loaded successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Recommendation models failed (non-critical): {e}")
 
         logger.info("=" * 70)
-        logger.info("✅ STARTUP COMPLETE - Application ready!")
+        logger.info("✅ APPLICATION STARTUP COMPLETE")
         logger.info("=" * 70)
 
     except Exception as e:
-        logger.error("=" * 70)
-        logger.error(f"❌ STARTUP FAILED: {str(e)}")
-        logger.error("=" * 70)
+        logger.error(f"❌ Critical startup error: {e}", exc_info=True)
         raise
 
-    # ========== APP RUNS HERE ==========
     yield
 
     # ========== SHUTDOWN ==========
     logger.info("=" * 70)
-    logger.info("🛑 SHUTDOWN: Cleaning up services...")
+    logger.info("🛑 SHUTDOWN: Cleaning up resources...")
     logger.info("=" * 70)
     
     try:
-        # Close Kafka connection
-        logger.info("Closing Kafka connections...")
         await shutdown_kafka()
-        logger.info("✅ Kafka connections closed successfully")
-
-        # Close Redis connection
-        logger.info("Closing Redis connection...")
-        await close_redis()
-        logger.info("✅ Redis closed successfully")
-
-        # Cleanup WebSocket connections
-        logger.info(f"Closing {len(manager.active_connections)} WebSocket connections...")
-        for user_id in list(manager.active_connections.keys()):
-            manager.disconnect(user_id)
-        logger.info("✅ WebSocket connections closed")
-
-        logger.info("=" * 70)
-        logger.info("✅ SHUTDOWN COMPLETE")
-        logger.info("=" * 70)
-
+        logger.info("✅ Kafka shutdown complete")
     except Exception as e:
-        logger.error(f"❌ Shutdown error: {e}")
+        logger.warning(f"⚠️ Kafka shutdown error: {e}")
 
+    try:
+        if redis_client:
+            await close_redis()
+            logger.info("✅ Redis connection closed")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis shutdown error: {e}")
 
-# Create FastAPI app with lifespan
+    logger.info("=" * 70)
+    logger.info("✅ APPLICATION SHUTDOWN COMPLETE")
+    logger.info("=" * 70)
+
+# Create FastAPI app
 app = FastAPI(
-    title="Taxi Trip API",
-    description="Real-time ride prediction and optimization",
+    title="Trip Service API",
+    description="AI-powered ride-sharing platform with ML predictions",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -263,114 +210,59 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.CORS_ORIGINS.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Add Prometheus metrics middleware
+# Add metrics middleware
 app.add_middleware(MetricsMiddleware)
 
 # Include routers
-logger.info("Registering API routes...")
-app.include_router(prediction.router, prefix="/api/predict", tags=["predictions"])
-app.include_router(ride.router, prefix="/api/rides", tags=["rides"])
-app.include_router(driver.router, prefix="/api/drivers", tags=["drivers"])
-app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
-app.include_router(recommendations.router, prefix="/api/recommend", tags=["recommendations"])
-app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
-app.include_router(evidently.router, prefix="/api/evidently", tags=["evidently"])
-app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
-logger.info("✅ All routes registered successfully")
+app.include_router(prediction.router, prefix="/api/predictions", tags=["Predictions"])
+app.include_router(ride.router, prefix="/api/rides", tags=["Rides"])
+app.include_router(driver.router, prefix="/api/drivers", tags=["Drivers"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
+app.include_router(recommendations.router, prefix="/api/recommendations", tags=["Recommendations"])
+app.include_router(llm.router, prefix="/api/llm", tags=["LLM"])
+app.include_router(evidently.router, prefix="/api/evidently", tags=["Evidently"])
 
-# ========== ENDPOINTS ==========
-
+# Health check endpoint
 @app.get("/health")
 async def health():
     """Health check endpoint"""
     return {
-        "status": "ok",
+        "status": "✅ Healthy",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "services": {
-            "ml_models": ml_predictor is not None,
-            "redis": redis_client is not None,
-            "database": True,
-            "websocket_connections": len(manager.active_connections)
+            "database": "✅ Connected" if ml_predictor else "⚠️ Initializing",
+            "redis": "✅ Connected" if redis_client else "❌ Not connected",
+            "ml_models": "✅ Loaded" if ml_predictor else "❌ Not loaded"
         }
     }
 
+# Metrics endpoint (Prometheus)
 @app.get("/metrics")
 async def metrics():
     """Prometheus metrics endpoint"""
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(content=generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
+# WebSocket endpoint for real-time updates
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    """WebSocket endpoint for real-time driver/rider updates"""
+async def websocket_endpoint(user_id: str, websocket: WebSocket):
     await manager.connect(user_id, websocket)
     try:
         while True:
             data = await websocket.receive_json()
-            
-            if data.get("type") == "driver_location":
-                # Store driver location in Redis
-                await redis_client.set(
-                    f"driver:loc:{user_id}",
-                    f"{data['lat']},{data['lng']}",
-                    ex=15
-                )
-                logger.debug(f"Driver location updated: {user_id}")
-                
-                # Send to Kafka for data events
-                event = {
-                    "type": "driver_location",
-                    "driver_id": user_id,
-                    "lat": data["lat"],
-                    "lng": data["lng"],
-                    "timestamp": datetime.datetime.now().isoformat()
-
-                }
-                await kafka_producer.send_event("driver-events", event)
-
-                # Notify nearby riders
-                for conn_id, conn in manager.active_connections.items():
-                    if conn_id.startswith("rider_"):
-                        await manager.send_personal_message({
-                            "type": "driver_location_update",
-                            "driver_id": user_id,
-                            "lat": data["lat"],
-                            "lng": data["lng"]
-                        }, conn_id)
-            
-            elif data.get("type") == "ride_status":
-                # Send ride status to kafka
-                event = {
-                    "type": "ride_status",
-                    "user_id": user_id,
-                    "status": data["status"],
-                    "timestamp": datetime.datetime.now().isoformat()
-                }
-                await kafka_producer.send_event("ride-events", event)
-
-                # Notify driver
-                rider_id = data.get("rider_id")
-                if rider_id:
-                    await manager.send_personal_message({
-                        "type": "ride_status",
-                        "status": data.get('status'),
-                        "ride_id": data.get('ride_id')
-                    }, user_id)
-                
+            logger.debug(f"Received from {user_id}: {data}")
     except WebSocketDisconnect:
         manager.disconnect(user_id)
+        logger.info(f"Client {user_id} disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error for {user_id}: {e}")
+        manager.disconnect(user_id)
 
-# Optional: Root endpoint
-@app.get("/")
-async def root():
-    """API root endpoint"""
-    return {
-        "message": "🚕 Taxi Trip Prediction API",
-        "docs": "/docs",
-        "health": "/health",
-        "metrics": "/metrics"
-    }
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,7 +1,9 @@
 import logging
-from fastapi import APIRouter, HTTPException
-from app.core.duckdb_client import duckdb_client
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from pydantic import BaseModel
+from app.core.postgres_db import get_postgres_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -11,14 +13,22 @@ class QueryRequest(BaseModel):
     sql: str
 
 @router.get("/health")
-async def anyltics_health():
-    """Check DuckDB connection health"""
-    return {
-        "connected": duckdb_client.connected,
-        "status": "✅ Connected to DuckDB" if duckdb_client.connected else "❌ Not connected to DuckDB"
-    }
+async def anyltics_health(db: AsyncSession = Depends(get_postgres_db)):
+    """Check PostgreSQL connection health"""
+    try:
+        await db.execute(text("SELECT 1"))
+        return {
+            "connected": True,
+            "status": "✅ Analytics database connection is healthy"
+        }
+    except Exception as e:
+        logger.error(f"❌ Analytics database connection failed: {e}")
+        return {
+            "connected": False,
+            "status": f"❌ Analytics database connection failed: {e}"
+        }
 
-@router.post("/duckdb/query")
+@router.post("/query")
 async def run_query(req: QueryRequest):
     """Run a custom SQL query against DuckDB and return results"""
     try:

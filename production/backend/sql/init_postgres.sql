@@ -1,10 +1,11 @@
 -- DuckDB Analytics Schema (Local Tables)
--- Kafka consumer will write events here in real-time
+-- PostgreSQL schema for analytics 
+CREATE SCHEMA IF NOT EXISTS analytics;
 
 -- ================================================================
 -- Table 1: Kafka events from frontend/rides
 -- ================================================================
-CREATE TABLE IF NOT EXISTS taxi_trip_data_events (
+CREATE TABLE IF NOT EXISTS analytics.taxi_trip_data_events (
     event_id        VARCHAR PRIMARY KEY,
     event_type      VARCHAR NOT NULL,
     user_id         VARCHAR,
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS taxi_trip_data_events (
 -- ================================================================
 -- Table 2: Rides analytics copy
 -- ================================================================
-CREATE TABLE IF NOT EXISTS trip (
+CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id          VARCHAR PRIMARY KEY,
     rider_id         VARCHAR NOT NULL,
     driver_id        VARCHAR,
@@ -40,7 +41,7 @@ CREATE TABLE IF NOT EXISTS trip (
 -- ================================================================
 -- Table 3: Driver profiles
 -- ================================================================
-CREATE TABLE IF NOT EXISTS drivers (
+CREATE TABLE IF NOT EXISTS analytics.drivers (
     driver_id   VARCHAR PRIMARY KEY,
     name        VARCHAR,
     vehicle     VARCHAR,
@@ -52,7 +53,7 @@ CREATE TABLE IF NOT EXISTS drivers (
 -- ================================================================
 -- Table 4: LLM interactions audit log
 -- ================================================================
-CREATE TABLE IF NOT EXISTS llm_interactions (
+CREATE TABLE IF NOT EXISTS analytics.llm_interactions (
     interaction_id   VARCHAR PRIMARY KEY,
     user_id          VARCHAR,
     session_id       VARCHAR,
@@ -67,38 +68,38 @@ CREATE TABLE IF NOT EXISTS llm_interactions (
 -- ================================================================
 -- Create indexes for better query performance
 -- ================================================================
-CREATE INDEX IF NOT EXISTS idx_events_event_type  ON taxi_trip_data_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_events_user_id     ON taxi_trip_data_events(user_id);
-CREATE INDEX IF NOT EXISTS idx_trip_rider_id      ON trip(rider_id);
-CREATE INDEX IF NOT EXISTS idx_trip_driver_id     ON trip(driver_id);
-CREATE INDEX IF NOT EXISTS idx_trip_status        ON trip(status);
-CREATE INDEX IF NOT EXISTS idx_drivers_rating     ON drivers(rating);
-CREATE INDEX IF NOT EXISTS idx_llm_user_id        ON llm_interactions(user_id);
-CREATE INDEX IF NOT EXISTS idx_llm_session_id     ON llm_interactions(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_event_type  ON analytics.taxi_trip_data_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_user_id     ON analytics.taxi_trip_data_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_trip_rider_id      ON analytics.trip(rider_id);
+CREATE INDEX IF NOT EXISTS idx_trip_driver_id     ON analytics.trip(driver_id);
+CREATE INDEX IF NOT EXISTS idx_trip_status        ON analytics.trip(status);
+CREATE INDEX IF NOT EXISTS idx_drivers_rating     ON analytics.drivers(rating);
+CREATE INDEX IF NOT EXISTS idx_llm_user_id        ON analytics.llm_interactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_llm_session_id     ON analytics.llm_interactions(session_id);
 
 -- ================================================================
 -- Create analytical views for common queries
 -- ================================================================
 
 -- View 1: Rides summary by status
-CREATE VIEW IF NOT EXISTS rides_by_status AS
+CREATE VIEW IF NOT EXISTS analytics.rides_by_status AS
 SELECT 
     status,
     COUNT(*) as total_rides,
     AVG(distance_km) as avg_distance,
     AVG(actual_fare) as avg_fare,
     MAX(created_at) as latest_ride
-FROM trip
+FROM analytics.trip
 GROUP BY status;
 
 -- View 2: Driver performance metrics
-CREATE VIEW IF NOT EXISTS driver_metrics AS
+CREATE VIEW IF NOT EXISTS analytics.driver_metrics AS
 SELECT 
     driver_id,
     COUNT(ride_id) as total_rides,
     AVG(rating) as avg_rating,
     SUM(actual_fare) as total_earnings
-FROM trip
+FROM analytics.trip
 WHERE driver_id IS NOT NULL
 GROUP BY driver_id;
 
@@ -108,6 +109,6 @@ SELECT
     DATE_TRUNC('hour', created_at) as hour,
     COUNT(*) as ride_count,
     AVG(actual_fare) as avg_fare
-FROM trip
+FROM analytics.trip
 GROUP BY DATE_TRUNC('hour', created_at)
 ORDER BY hour DESC;

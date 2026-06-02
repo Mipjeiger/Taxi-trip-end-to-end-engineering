@@ -112,17 +112,17 @@ async def lifespan(app: FastAPI):
     
     try:
         # Step 1: Initialize database
-        logger.info("[1/5] Initializing database...")
+        logger.info("[1/6] Initializing database...")
         await init_db()
         logger.info("✅ Database initialized successfully")
 
         # Step 2: Initialize Redis
-        logger.info("[2/5] Initializing Redis...")
+        logger.info("[2/6] Initializing Redis...")
         redis_client = await get_redis()
         logger.info("✅ Redis initialized successfully")
 
         # Step 3: Initialize Kafka
-        logger.info("[3/5] Initializing Kafka...")
+        logger.info("[3/6] Initializing Kafka...")
         try:
             await initialize_kafka()
             logger.info("✅ Kafka initialized successfully")
@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️ Kafka initialization failed (non-critical): {e}")
 
         # Step 4: Initialize MLflow (non-blocking)
-        logger.info("[4/5] Initializing MLflow...")
+        logger.info("[4/6] Initializing MLflow...")
         try:
             await initialize_mlflow()
             logger.info("✅ MLflow initialized successfully")
@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️ MLflow initialization failed (non-critical): {e}")
 
         # Step 5: Load ML models
-        logger.info("[5/5] Loading ML models...")
+        logger.info("[5/6] Loading ML models...")
         try:
             ml_predictor = MLPredictor()
             await ml_predictor.load_models()
@@ -149,6 +149,15 @@ async def lifespan(app: FastAPI):
             ml_predictor = None
 
         # Step 6: Intialize PostgreSQL connection for analytics
+        logger.info("[6/6] Initializing PostgreSQL connection for analytics...")
+        try:
+            from app.core.postgres_db import postgres_con
+            if await postgres_con.verify_connection():
+                logger.info("✅ PostgreSQL connection for analytics is healthy")
+            else:
+                logger.warning("⚠️ PostgreSQL connection for analytics failed health check")
+        except Exception as e:
+            logger.error(f"❌ PostgreSQL connection initialization failed: {e}")
 
         # Load recommendation models
         logger.info("Loading recommendation models...")
@@ -181,6 +190,13 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 70)
     logger.info("🛑 SHUTDOWN: Cleaning up resources...")
     logger.info("=" * 70)
+
+    try:
+        from app.core.postgres_db import postgres_con
+        await postgres_con.close()
+        logger.info("✅ PostgreSQL connection closed")
+    except Exception as e:
+        logger.warning(f"⚠️ PostgreSQL shutdown error: {e}")
     
     try:
         await shutdown_kafka()
@@ -210,7 +226,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS.split(","),
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

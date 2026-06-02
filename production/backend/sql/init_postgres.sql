@@ -1,3 +1,4 @@
+-- Active: 1780295933317@@127.0.0.1@5433@taxi_db
 -- DuckDB Analytics Schema (Local Tables)
 -- PostgreSQL schema for analytics 
 CREATE SCHEMA IF NOT EXISTS analytics;

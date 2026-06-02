@@ -82,330 +82,496 @@
         - Airflow cluster activity to monitor data inference
         ![alt text](images/D8159409-6F3C-4E50-B08A-388B2AC6CE63.png)
     - Kafka to retrive data click button from customer
-    
-- 🎯 GOALS ENGINEERING PROJECT
-- Step 1 — Frontend (Website & Mobile App)
-    Frontend is the user interaction layer.
-    This is where:
-    passengers book rides
-    drivers accept rides
-    maps are displayed
-    ETA appears
-    pricing is shown
-    Frontend itself does not process ML models directly.
-    It sends requests to the backend API.
-    Usually:
-    Website → React / Next.js
-    Mobile → Flutter / React Native / Kotlin / Swift
-    What Happens
-    Passenger opens app and requests a ride.
-    Frontend collects:
-    pickup location
-    destination
-    ride type
-    Then sends request to backend.
-    Example Plaintext
-    [Frontend]
 
-    User opens taxi app
-    → enters pickup location
-    → enters destination
-    → clicks "Book Ride"
+---
 
-    Frontend sends API request:
-    POST /predict-trip
+### **🚀 Complete Production Runbook**
 
-- Step 2 — FastAPI (Main Backend Service)
-    FastAPI
-    FastAPI becomes the central backend system.
-    It acts as:
-    API gateway
-    business logic processor
-    ML serving layer
-    FastAPI receives requests from frontend and coordinates all services.
-    What Happens
-    FastAPI:
-    validates request
-    checks authentication
-    communicates with Redis
-    stores data into PostgreSQL
-    sends events to Kafka
-    serves ML predictions
-    Example Plaintext
-    [FastAPI]
+```python
+┌─────────────────────────────────────────┐
+│  Frontend (React @ 4002)                │
+├─────────────────────────────────────────┤
+│  Backend (FastAPI @ 8000)               │
+│  + Redis (cache @ 6379)                 │
+│  + PostgreSQL (analytics @ 5433)        │
+├─────────────────────────────────────────┤
+│  Data Pipeline:                         │
+│  • Airflow (scheduler @ 8080)           │
+│  • Kafka (events @ 9092)                │
+│  • Parquet files                        │
+├─────────────────────────────────────────┤
+│  Visualization:                         │
+│  • Metabase (BI @ 3001)                 │
+│  • Prometheus (metrics @ 9090)          │
+│  • Grafana (dashboards @ 3000)          │
+├─────────────────────────────────────────┤
+│  Support:                               │
+│  • MLflow (models @ 5001)               │
+│  • Kafka-UI (@ 8081)                    │
+│  • RedisInsight (@ 5540)                │
+│  • Evidently-UI (LLM @ 8085)            │
+└─────────────────────────────────────────┘
+```
 
-    Request received:
-    pickup = Mall A
-    destination = Airport
+---
 
-    FastAPI validates request
-    → user authenticated
-    → request accepted
+### **🔧 STEP 1: Verify Prerequisites**
 
-- Step 3 — PostgreSQL / Supabase (Persistent Storage)
-    PostgreSQL
-    Supabase
-    This is the permanent storage system.
-    All critical business data is stored here.
-    What Happens
-    Backend stores:
-    ride request
-    user info
-    driver info
-    trip history
-    payment logs
-    This ensures data is safe and recoverable.
-    Example Plaintext
-    [PostgreSQL]
+bash
 
-    Ride request stored:
-    - trip_id = TRX001
-    - user_id = U123
-    - pickup = Mall A
-    - destination = Airport
-    - status = searching_driver
+```python
+# Check Docker
+docker --version
 
-- Step 4 — Redis (Real-Time Cache)
-    Redis provides ultra-fast temporary data access.
-    Taxi systems need instant responses.
-    What Happens
-    Redis stores:
-    nearby drivers
-    active sessions
-    ETA cache
-    surge pricing cache
-    This avoids repeated heavy database queries.
-    Example Plaintext
-    [Redis]
+# Check Docker Compose
+docker-compose --version
 
-    Nearby drivers cached:
-    - Driver A = 1.2 km
-    - Driver B = 2.1 km
+# Verify you're in the right directory
+cd /Users/miftahhadiyannoor/Documents/Gojek-Project
+pwd
 
-    ETA cache found:
-    Estimated pickup = 4 minutes
+# Check .env file exists
+ls -la production/.env
+```
 
-- Step 5 — Kafka (Real-Time Event Streaming)
-    Apache Kafka
-    Kafka streams real-time events between services.
-    Instead of services communicating directly, they publish events into Kafka.
-    What Happens
-    FastAPI publishes:
-    ride request events
-    GPS events
-    payment events
-    prediction events
-    Other systems consume these events independently.
-    Example Plaintext
-    [Kafka]
+---
 
-    Event published:
-    topic = ride_requests
+### **🔧 STEP 2: Verify .env Configuration**
 
-    Payload:
-    {
-    trip_id: TRX001,
-    pickup: Mall A,
-    destination: Airport
-    }
+```python
+# View all critical environment variables
+grep -E "POSTGRES_|AIRFLOW_|KAFKA_|REDIS_" production/.env | head -20
 
-- Step 6 — Databricks (Large Scale Processing & ML Training)
-    Databricks
-    Databricks processes large-scale data and trains ML models.
-    It handles heavy computations beyond normal backend capability.
-    What Happens
-    Databricks:
-    processes trip history
-    analyzes traffic patterns
-    engineers ML features
-    trains ETA prediction models
-    Example Plaintext
-    [Databricks]
+# Specific checks
+grep POSTGRES_USER production/.env
+grep POSTGRES_PASSWORD production/.env
+grep POSTGRES_DB production/.env
+grep KAFKA_BOOTSTRAP_SERVERS production/.env
 
-    Processing:
-    - 5 million trip records
-    - weather data
-    - traffic data
-    - GPS movement
+Required variables to exist:
 
-    Generated feature:
-    average_speed_during_rain
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password
+POSTGRES_DB=gojek_taxi
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+AIRFLOW_DB_USER=airflow
+AIRFLOW_DB_PASSWORD=airflow_password
+```
 
-- Step 7 — Airflow (Pipeline Automation)
-    Apache Airflow
-    Airflow automates engineering workflows.
-    Instead of manually retraining models, Airflow schedules everything automatically.
-    What Happens
-    Airflow orchestrates:
-    data extraction
-    preprocessing
-    feature engineering
-    model training
-    validation
-    deployment
-    Example Plaintext
-    [Airflow]
+---
 
-    Scheduled task started:
-    02:00 AM daily
+### **🔧 STEP 3: Clean Up Old State**
 
-    Pipeline:
-    Extract Data
-    → Clean Data
-    → Generate Features
-    → Train Model
-    → Evaluate Accuracy
+```python
+# List running containers
+docker-compose ps
 
-- Step 8 — MLflow (Model Lifecycle Management)
-    MLflow
-    MLflow tracks and manages trained models.
-    It stores:
-    model versions
-    experiment metrics
-    training metadata
-    What Happens
-    MLflow compares model performance.
-    Best-performing model gets promoted to production.
-    Example Plaintext
-    [MLflow]
+# Stop all services
+docker-compose down
 
-    Experiment Results:
+# Remove old volumes (CAREFUL - removes all data)
+docker volume ls | grep gojek
 
-    Model v12:
-    RMSE = 4.8
+# If you want fresh start:
+docker-compose down -v
 
-    Model v13:
-    RMSE = 3.9
+# Otherwise just down is fine
 
-    Model v13 promoted to Production
+Expected output:
+Stopping all running containers...
+Removed all networks
+```
 
-- Step 9 — FastAPI Loads Approved Production Model
-    FastAPI
-    After MLflow approves the model, FastAPI uses it for live inference.
-    This is the production prediction stage.
-    What Happens
-    FastAPI:
-    loads approved ML model
-    receives prediction request
-    generates ETA prediction
-    Example Plaintext
-    [FastAPI Production Inference]
+**🔧 STEP 4: Build Docker Images**
 
-    Production model loaded:
-    eta_model_v13
+```python
+# Build backend image
+docker-compose build --no-cache backend
 
-    Prediction request:
-    Airport → Hotel
+# Build Airflow images
+docker-compose build --no-cache airflow-webserver airflow-scheduler
 
-    Predicted ETA:
-    12 minutes
+# Check build succeeded
+docker images | grep -E "gojek|backend|airflow"
 
-- Step 10 — Evidently AI (ML Monitoring)
-    Evidently AI
-    Evidently monitors production ML quality.
-    Real-world conditions constantly change.
-    What Happens
-    Evidently checks:
-    feature drift
-    target drift
-    prediction instability
-    It compares:
-    training data
-    vs
-    live production data
-    Example Plaintext
-    [Evidently AI]
+Expected:
+gojek-backend           latest    abc123...   900MB
+gojek-airflow-webserver latest    def456...   2.5GB
+```
 
-    Drift detected:
-    average_trip_duration changed
+**🔧 STEP 5: Start All Services (Ordered)**
 
-    Training:
-    15 minutes
+**Phase 1: Infrastructure (2-3 minutes)**
 
-    Production:
-    26 minutes
+```python
+# Start databases first
+docker-compose up -d postgres redis airflow-db
 
-    Alert:
-    Model quality degrading
+# Wait for databases to be healthy
+sleep 5
+docker-compose ps | grep -E "postgres|redis|airflow-db"
+```
 
-- Step 11 — Prometheus (Metrics Collection)
-    Prometheus
-    Prometheus continuously collects operational metrics.
-    It monitors system health.
-    What Happens
-    Prometheus measures:
-    API latency
-    CPU usage
-    memory usage
-    Kafka lag
-    prediction latency
-    Example Plaintext
-    [Prometheus]
+**Phase 2: Kafka & Coordination (2-3 minutes)**
 
-    Metrics collected:
-    API latency = 220ms
-    CPU usage = 68%
-    Prediction latency = 45ms
-    Kafka lag = 0
+```python
+# Start Kafka ecosystem
+docker-compose up -d zookeeper kafka
 
-- Step 12 — Grafana (Visualization Dashboard)
-    Grafana
-    Grafana visualizes metrics into dashboards.
-    Engineers monitor the entire system visually.
-    What Happens
-    Grafana displays:
-    ride requests
-    active drivers
-    API latency
-    ML metrics
-    drift alerts
-    infrastructure health
-    Example Plaintext
-    [Grafana Dashboard]
+# Wait for Kafka to be healthy
+sleep 10
+docker-compose ps | grep -E "zookeeper|kafka"
+```
 
-    System Status:
-    ✔ API Healthy
-    ✔ Kafka Stable
-    ✔ Redis Healthy
-    ⚠ Drift Alert Detected
-    ✔ Database Operational
+**Phase 3: Middleware Services (2 minutes)**
 
-    Current Requests:
-    2,300 rides/minute
-    Complete End-to-End System Flow
-    Frontend
-    → User books ride
+```bash
+# Start caching and tracking
+docker-compose up -d mlflow redisinsight
 
-------------------------------------------------------------
-- FastAPI
-    → validates request
+# Start monitoring
+docker-compose up -d prometheus
 
-- PostgreSQL
-    → stores trip transaction
+# Wait for all
+sleep 5
+docker-compose ps | grep -E "mlflow|redis|prometheus"
+```
 
-- Redis
-    → retrieves nearby drivers
+**Phase 4: Application Layer (3-5 minutes)**
 
-- Kafka
-    → streams ride event
+```bash
+# Start backend (depends on postgres, redis)
+docker-compose up -d backend
 
-- Databricks
-    → processes large-scale trip data
+# Wait for backend to be healthy (40+ seconds)
+sleep 45
+docker-compose ps backend
 
-- Airflow
-    → automates retraining pipeline
+# Start frontend (depends on backend)
+docker-compose up -d frontend
 
-- MLflow
-    → manages model versions
+# Start Airflow (depends on airflow-db)
+docker-compose up -d airflow-webserver airflow-scheduler
 
-- FastAPI
-    → serves approved production model
+# Wait for all
+sleep 10
+```
 
-- Evidently AI
-    → monitors ML quality
+**Phase 5: Visualization & Monitoring (2-3 minutes)**
 
-- Prometheus
-    → collects infrastructure metrics
+```bash
+# Start BI & monitoring tools
+docker-compose up -d metabase grafana kafka-ui
 
-- Grafana
-    → visualizes system health
+# Start observability
+docker-compose up -d evidently-ui
+
+# Final wait
+sleep 15
+```
+
+**Alternative: Start All at Once (Faster)**
+
+```bash
+# Start all services together
+docker-compose up -d
+
+# Monitor startup progress
+docker-compose logs -f 2>&1 | head -100
+
+# Wait for everything to stabilize (2-3 minutes)
+sleep 120
+```
+
+**✅ STEP 6: Verify All Services Are Healthy**
+
+```bash
+# Show all services
+docker-compose ps
+
+# Count running services
+docker-compose ps | grep "Up" | wc -l
+
+# Should show: 15 services
+
+Expected output - ALL should be "Up":
+redis                Up (healthy)
+redisinsight         Up
+mlflow               Up (healthy)
+postgres             Up (healthy)
+backend              Up (healthy)
+frontend             Up
+metabase             Up (healthy)
+prometheus           Up
+grafana              Up
+airflow-db           Up (healthy)
+airflow-webserver    Up (healthy)
+airflow-scheduler    Up
+zookeeper            Up (healthy)
+kafka                Up (healthy)
+kafka-ui             Up
+evidently-ui         Up (healthy)
+```
+
+**🔌 STEP 7: Test Each Service**
+
+```bash
+**Test Backend API**
+
+# Check if API is responding
+curl -X GET http://localhost:8000/health
+
+# Should return JSON with status
+
+Test PostgreSQL Connection
+# Connect to database
+docker exec postgres psql -U postgres -d gojek_taxi -c "SELECT version();"
+
+# Should show PostgreSQL version
+
+Test Redis
+# Ping Redis
+docker exec redis redis-cli ping
+
+# Should return: PONG
+
+Test Kafka
+# List Kafka topics
+docker exec kafka kafka-topics --list --bootstrap-server localhost:9092
+
+# Should show: ride-requests, ride-events, driver-events, frontend-events
+
+Test Airflow
+# List DAGs
+docker exec airflow_webserver airflow dags list
+
+# Should show: rides_data_ingestion
+```
+
+**🌐 STEP 8: Access Web Interfaces**
+
+| Service | URL | Purpose |
+| --- | --- | --- |
+| **Frontend** | http://localhost:4002 | React app |
+| **Backend API** | http://localhost:8000/docs | Swagger UI |
+| **Metabase** | http://localhost:3001 | BI Dashboard |
+| **Grafana** | http://localhost:3000 | Monitoring (admin/admin) |
+| **Prometheus** | http://localhost:9090 | Metrics |
+| **Airflow** | http://localhost:8080 | DAG Scheduler |
+| **Kafka-UI** | http://localhost:8081 | Kafka Topics |
+| **MLflow** | http://localhost:5001 | Model Tracking |
+| **RedisInsight** | http://localhost:5540 | Redis UI |
+| **Evidently** | http://localhost:8085 | LLM Monitoring |
+
+**📊 STEP 9: Initialize Data Pipelines**
+
+```bash
+**Option A: Load Sample Data via Airflow**
+
+# Trigger the data ingestion DAG
+docker exec airflow_webserver airflow dags trigger rides_data_ingestion
+
+# Monitor DAG run
+docker exec airflow_webserver airflow dags list-runs --dag-id rides_data_ingestion
+
+# View logs
+docker-compose logs airflow_webserver | grep -i "extract\|load" | tail -20
+
+---------------------------------------------------------------------------
+
+Option B: Load Manually
+# Insert sample data into PostgreSQL
+docker exec backend python3 << 'EOF'
+import psycopg2
+import os
+
+conn = psycopg2.connect(
+    host=os.getenv("POSTGRES_HOST", "postgres"),
+    database=os.getenv("POSTGRES_DB", "gojek_taxi"),
+    user=os.getenv("POSTGRES_USER", "postgres"),
+    password=os.getenv("POSTGRES_PASSWORD", "password")
+)
+cursor = conn.cursor()
+
+# Create sample rides
+for i in range(100):
+    cursor.execute("""
+        INSERT INTO rides (ride_id, rider_id, driver_id, status, actual_fare)
+        VALUES (%s, %s, %s, %s, %s)
+    """, [f"ride_{i}", f"rider_{i%10}", f"driver_{i%5}", "completed", 50000 + i*1000])
+
+conn.commit()
+cursor.close()
+conn.close()
+print("✅ Inserted 100 sample rides")
+EOF
+```
+
+**🔄 STEP 10: Configure Metabase (First Time)**
+
+**Setup Metabase BI dashboard:**
+
+1. **Open http://localhost:3001**
+2. **Complete setup:**
+    - Set admin email
+    - Set admin password
+    - Click "Let's get started"
+3. **Connect to PostgreSQL:**
+    - Click "Admin Settings" (gear icon)
+    - Go to "Databases" → "New Database"
+    - Database name: `taxi_analytics`
+    - Database type: `PostgreSQL`
+    - Host: `postgres`
+    - Port: `5432`
+    - Username: (from POSTGRES_USER in .env)
+    - Password: (from POSTGRES_PASSWORD in .env)
+    - Database: (from POSTGRES_DB in .env)
+    - Click "Save"
+4. **Create First Dashboard:**
+    - Click "+" → "New dashboard"
+    - Add cards/queries to visualize data
+    - Save dashboard
+
+## **📈 STEP 11: Monitor System Health**
+
+**Check system metrics continuously:**
+
+```bash
+# Watch all container logs in real-time
+docker-compose logs -f
+
+# Or watch specific service
+docker-compose logs -f backend
+
+# Or watch errors only
+docker-compose logs | grep -i error
+
+# Check resource usage
+docker stats
+
+# Check disk usage
+df -h
+du -sh /var/lib/docker/volumes/*
+```
+
+**🚦 STEP 12: Common Operations**
+
+```bash
+Restart a Single Service
+
+# Restart backend after code changes
+docker-compose restart backend
+
+# Wait for it to be healthy
+sleep 10
+docker-compose ps backend
+
+Rebuild and Restart Backend
+# After changing backend code
+docker-compose build --no-cache backend
+docker-compose up -d backend
+
+View Service Logs
+# Last 50 lines
+docker-compose logs backend | tail -50
+
+# Follow in real-time
+docker-compose logs -f backend
+
+# Filter for errors
+docker-compose logs backend | grep -i error
+
+Stop Everything
+# Stop all services (data persists)
+docker-compose down
+
+# Stop all and remove volumes (WARNING: data lost)
+docker-compose down -v
+```
+
+**✅ COMPLETE STARTUP SEQUENCE (Copy-Paste)**
+
+```bash
+# 1. Navigate to project
+cd /Users/miftahhadiyannoor/Documents/Gojek-Project
+
+# 2. Clean old state
+docker-compose down
+
+# 3. Build images
+docker-compose build --no-cache backend airflow-webserver airflow-scheduler
+
+# 4. Start infrastructure
+docker-compose up -d postgres redis airflow-db zookeeper
+sleep 15
+
+# 5. Start Kafka
+docker-compose up -d kafka
+sleep 10
+
+# 6. Start everything else
+docker-compose up -d
+
+# 7. Wait for all services
+sleep 60
+
+# 8. Verify all healthy
+docker-compose ps
+
+# 9. Test key services
+curl http://localhost:8000/health
+docker exec redis redis-cli ping
+docker exec postgres psql -U postgres -d gojek_taxi -c "SELECT 1"
+
+# 10. Open dashboards
+echo "✅ Frontend: http://localhost:4002"
+echo "✅ Backend API: http://localhost:8000/docs"
+echo "✅ Metabase: http://localhost:3001"
+echo "✅ Grafana: http://localhost:3000"
+echo "✅ Airflow: http://localhost:8080"
+
+Out of Disk Space
+# Check Docker disk usage
+docker system df
+
+# Clean up unused volumes
+docker volume prune
+
+# Clean up unused images
+docker image prune
+
+Database Connection Error
+# Test PostgreSQL directly
+docker exec postgres psql -U postgres -c "SELECT version();"
+
+# Check backend can reach postgres
+docker exec backend ping postgres
+
+# Check .env has correct credentials
+grep POSTGRES production/.env
+
+Port Already in Use
+# Find what's using port 8000
+lsof -i :8000
+
+# Kill it
+kill -9 <PID>
+
+# Or change port in docker-compose.yml
+```
+
+## **📋 EXPLANATION TABLE**
+
+| Step | What It Does | Why | Time |
+| --- | --- | --- | --- |
+| 1. Verify prereqs | Checks Docker/Compose | Catch issues early | 30s |
+| 2. Check .env | Loads configuration | Wrong config = broken services | 30s |
+| 3. Clean up | Removes old containers/volumes | Fresh state, no conflicts | 1m |
+| 4. Build images | Creates Docker images | Code packaged into containers | 3-5m |
+| 5-6. Start infrastructure | Start postgres, redis, kafka | These are dependencies for other services | 2m |
+| 7. Start all services | Start remaining 10 services | They depend on infrastructure | 2m |
+| 8. Verify health | Checks all 15 services | Confirm everything started | 1m |
+| 9. Test services | Test connectivity | Verify services are responding | 1m |
+| 10. Access dashboards | Open web UIs | Verify visual interfaces work | 1m |

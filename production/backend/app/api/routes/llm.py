@@ -1,32 +1,32 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Dict, Optional, Literal
-from datetime import datetime
 import logging
+import time
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.postgres_db import get_postgres_db
+from app.core.qdrant_client import qdrant_vector_db
+from app.core.evidently_monitor import evidently_monitor
+from app.services.llm_services import llm_service
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
 from app.services.llm_services import LLMService
-from app.api.dependencies import get_ml_predictor
+from datetime import datetime
+import uuid
 from app.services.ml_predictor import MLPredictor
+from app.api.dependencies import get_ml_predictor
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 class Message(BaseModel):
-    role: Literal["user", "assistant", "system"] = Field(
-        ..., description="Role of message sender"
-    )
-    content: str = Field(
-        ..., min_length=1, description="Content of the message"
-    )
-
-    @field_validator("role")
-    def validate_role(cls, v):
-        if v not in ["user", "assistant", "system"]:
-            raise ValueError(f"Role must be one of: user, assistant, system. Got: {v}")
-        return v
+    role: str = Field(..., pattern="^(system|user|assistant)$")
+    content: str = Field(..., min_length=1)
 
 class ChatRequest(BaseModel):
-    messages: List[Message] = Field(..., min_items=1, description="List of messages in the conversation")
+    user_id: str
+    session_id: Optional[str] = None
+    messages: List[Message] = List[Message]
     temperature: float = Field(default=0.7, ge=0, le=2, description="Sampling temperature for response generation (0-2)")
+    context: Optional[str] = None # Optional context for the LLM to consider in the conversation
 
 class RouteRecommendRequest(BaseModel):
     query: str
@@ -41,39 +41,85 @@ class PriceQuestionRequest(BaseModel):
     price_context: Optional[float] = None
 
 @router.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    """Generate chat with the LLM."""
+async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_postgres_db)):
+    """Generate Chat endpoint with LLM, Qdrant vector search, and Evidently monitoring."""
+    start_time = time.time()
+    session_id = request.session_id or str(uuid.uuid4())
+
     try:
-        if not request.messages:
-            raise HTTPException(status_code=400, detail="Messages list cannot be empty.")
+        # Step 1: Search for context using Qdrant
+        context_results = []
+        if request.context:
+            logger.info(f"🔍 Searching Qdrant for context related to: {request.context}")
 
-        for i, msg in enumerate(request.messages):
-            if not msg.role:
-                raise HTTPException(status_code=400, detail=f"Message {i} is missing 'role' field.")
-            if not msg.content or not msg.content.strip():
-                raise HTTPException(status_code=400, detail=f"Message {i} has empty 'content' field.")
-            
-        logger.info(f"✅ Chat request validated: {len(request.messages)} messages")
+            # Create collection if not exists
+            logger.info("🔍 About to create/check chat_history collection")
+            qdrant_vector_db.create_collection("chat_history")
 
-        # Convert pydantic message objects to dicts for LLMService
-        messages_dict = [msg.model_dump() for msg in request.messages]
-        
-        # Define LLM service and get response
-        llm = LLMService()
-        response = await llm.chat(messages_dict, request.temperature)
+            # Search for similar conversation history based on the provided context
+            logger.info("🔍 Calling search_similar")
+            context_results = qdrant_vector_db.search_vector(
+                collection_name="chat_history",
+                query_vector=request.context.get("vector", []), # Assuming context includes a pre-computed vector
+                limit=3
+            )
+            logger.info(f"🔍 Found {len(context_results)} relevant context entries in Qdrant")
+
+        # Step 2: Call LLM with context
+        user_message = request.messages[-1].content if request.messages else ""
+        logger.info(f"💬 LLM Request: {user_message}")
+
+        messages = [msg.model_dump() for msg in request.messages]
+        response = await llm_service.chat(messages, request.temperature)
+
+        # Step 3: Calculate metrics
+        response_time_ms = int((time.time() - start_time) * 1000)
+        tokens_estimate = len(user_message.split()) + len(response.split()) # Simple token estimation
+        cost_estimate = (tokens_estimate / 1000) * 0.0001 # Groq pricing estimate
+
+        # Step 4: Store in Qdrant for future context
+        try:
+            logger.info(f"🔍 Storing conversation user: {request.user_id} in Qdrant with session_id: {session_id}")
+            qdrant_vector_db.add_point(
+                collection_name="chat_history",
+                point_id=hash(session_id) % (10**9), # Simple hash for unique ID
+                text=user_message,
+                metadata={
+                    "user_id": request.user_id,
+                    "session_id": session_id,
+                    "response": response,
+                    "timestamp": time.time()
+                }
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to store conversation in Qdrant: {e}")
+
+        # Step 5: Log metrics with Evidently
+        await evidently_monitor.log_llm_response(
+            db=db,
+            user_id=request.user_id,
+            session_id=session_id,
+            prompt=user_message,
+            response=response,
+            response_time_ms=response_time_ms,
+            tokens_used=tokens_estimate,
+            cost=cost_estimate
+        )
 
         return {
+            "session_id": session_id,
             "response": response,
-            "model": "llama-3.1-8b-instant",
-            "status": "success"
+            "metadata": {
+                "response_time_ms": response_time_ms,
+                "tokens": tokens_estimate,
+                "cost": f"${cost_estimate:.6f}",
+                "context_retrieved": len(context_results)
+            }
         }
     
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"❌ Error in chat endpoint: {type(e).__name__}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
-
+        logger.error(f"❌ Error in chat endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing chat request: {e}")
 
 @router.post("/recommend-route")
 async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredictor = Depends(get_ml_predictor)):

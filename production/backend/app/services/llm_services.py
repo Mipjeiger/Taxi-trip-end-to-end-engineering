@@ -27,12 +27,18 @@ class LLMService:
     # Create groq as primary LLM provider, with abstraction for future providers
     async def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
         """Generate chat response from LLM"""
-    # Validate all messages have required fields before making API call
+        # Validate all messages have required fields before making API call
         for i, msg in enumerate(messages):
+
+            if hasattr(msg, "model_dump"):
+                msg = msg.model_dump()  # Convert Pydantic model to dict if necessary
+
             if "role" not in msg or not msg["role"]:
                 raise ValueError(f"Message {i} is missing 'role' field.")
+            
             if "content" not in msg or not msg["content"] or not msg["content"].strip():
                 raise ValueError(f"Message {i} has empty 'content' field.")
+            
             if msg["role"] not in ["user", "assistant", "system"]:
                 raise ValueError(f"Message {i} has invalid 'role': {msg['role']}.")
         logger.info(f"✅ Validated {len(messages)} messages for LLM chat request.")
@@ -130,7 +136,7 @@ class LLMService:
             logger.error(f"❌ Error during Groq chat: {type(e).__name__}: {str(e)}")
             raise
     
-        async def recommend_routes(self, user_query: str, context: Dict = None) -> Dict:
+    async def recommend_routes(self, user_query: str, context: Dict = None) -> Dict:
             """Recommend routes based on natural language query."""
             system_prompt = """You are a taxi route recommendation engine assistant.
             Based on the user's query, suggest the best pickup and drop locations,
@@ -149,7 +155,7 @@ class LLMService:
             except:
                 return {"error": "Could not parse recommendation", "raw": response}
             
-        async def answer_route_question(self, question: str, route_context: Dict = None) -> str:
+    async def answer_route_question(self, question: str, route_context: Dict = None) -> str:
             """Answer user question about a specific route or map."""
             context_str = json.dumps(route_context) if route_context else "No specific context provided."
             system_prompt = f"""You are a helpful assistant for a taxi app.
@@ -162,3 +168,6 @@ class LLMService:
                 {"role": "user", "content": question}
             ]
             return await self.chat(messages, temperature=0.7)
+        
+# Singleton instance for application-wide use
+llm_service = LLMService()

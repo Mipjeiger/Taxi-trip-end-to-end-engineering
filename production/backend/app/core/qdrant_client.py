@@ -1,3 +1,4 @@
+from email.mime import text
 import logging
 import os
 from pathlib import Path
@@ -5,7 +6,7 @@ from dotenv import load_dotenv
 from typing import Optional, Dict, Any, List
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from sentence_transformers import SentenceTransformer
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -26,14 +27,17 @@ load_dotenv(dotenv_path=ENV_PATH)
 # ================================================================
 class QdrantVectorDB:
     """
-    Vector database client for semantic search and embeddings.
-    Used for route recommendations, driver matching, chat context.
+    Pure Qdrant client.
+
+    No embedding model
+    No sentence transformer
+    No torch
+
+    Accept vectors generated elsewhere
     """
 
     def __init__(self):
         self.client = None
-        self.embedding_model = None
-        self.vector_size = 384
         self._initialize()
 
     def _initialize(self):
@@ -48,16 +52,13 @@ class QdrantVectorDB:
                 timeout=30
             )
 
-            # Load sentence transformer model for embeddings
-            self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
             logger.info(f"✅ Connected to Qdrant at {qdrant_host}")
-            logger.info(f"✅ Loaded embedding model: all-MiniLM-L6-v2 ({self.vector_size} dimensions)")
             
         except Exception as e:
             logger.error(f"❌ Failed to initialize Qdrant client: {e}")
             raise
 
-    def create_collection(self, collection_name: str):
+    def create_collection(self, collection_name: str, vector_size: int = 784):
         """Create a vector collection for storing embeddings"""
         try:
             # Check if collection exists
@@ -72,30 +73,39 @@ class QdrantVectorDB:
             self.client.create_collection(
                 collection_name=collection_name,
                 vectors_config=VectorParams(
-                    size=self.vector_size,
+                    size=vector_size,
                     distance=Distance.COSINE # Cosine similarity for semantic search
                 )
             )
             logger.info(f"✅ Collection '{collection_name}' created successfully.")
+            logger.info(f"📊 Collection '{collection_name}' vector size: {vector_size}, distance metric: COSINE")
 
         except Exception as e:
             logger.error(f"❌ Failed to create Qdrant collections: {e}")
             raise
 
-    def embed_text(self, text: str) -> List[float]:
-        """Convert text to embedding vector using the loaded model"""
-        try:
-            embedding = self.embedding_model.encode(text)
-            return embedding.tolist()
-        except Exception as e:
-            logger.error(f"❌ Failed to embed text: {e}")
-            raise
+    def add_point(
+        self,
+        collection_name: str,
+        point_id: str,
+        vector: List[float],
+        metadata: Dict[str, Any]
+    ):
+        """Insert vector directly.
 
-    def add_point(self, collection_name: str, point_id: str, text: str, metadata: Dict[str, Any]):
-        """Add a vector point to the collection"""
+        Vector comes from:
+        - Groq
+        - OpenAI
+        - VoyageAI
+        - Jina
+        - Ollama
+        - etc."""
         try:
-            vector = self.embed_text(text)
 
+            logger.info(f"🔍 Adding point to collection '{collection_name}' with ID '{point_id}' and metadata: {metadata}")
+            logger.info(f"🔍 Vector length: {len(vector)} (should match collection vector size)")
+
+            # Assuming vector is provided directly (not generated from text)
             point = PointStruct(
                 id=point_id,
                 vector=vector,
@@ -106,24 +116,30 @@ class QdrantVectorDB:
                 collection_name=collection_name,
                 points=[point]
             )
-            logger.debug(f"✅ Added point '{point_id}' to collection '{collection_name}' with metadata: {metadata}")
+            logger.info(f"✅ Added point '{point_id}' to collection '{collection_name}' with metadata: {metadata}")
 
         except Exception as e:
             logger.error(f"❌ Failed to add point to Qdrant: {e}")
             raise
 
-    
-    def search_similar(self, collection_name: str, text: str, limit: int = 5) -> List[Dict]:
+    def search_vector(
+            self,
+            collection_name: str,
+            query_vector: List[float],
+            limit: int = 5,
+            score_threshold: float = 0.5
+    ):
         """Search for similar vectors in the collection"""
         try:
-            query_vector = self.embed_text(text)
+            logger.info(f"🔍 Searching for similar vectors in collection '{collection_name}' with query vector length: {len(query_vector)}")
 
             results = self.client.search(
                 collection_name=collection_name,
                 query_vector=query_vector,
                 limit=limit,
-                score_threshold=0.5 # Minimum similarity score to consider
+                score_threshold=score_threshold # Minimum similarity score to consider
             )
+            logger.info(f"🔍 Found {len(results)} similar vectors in collection '{collection_name}'")
 
             return [
                 {
@@ -136,6 +152,15 @@ class QdrantVectorDB:
         
         except Exception as e:
             logger.error(f"❌ Failed to search similar vectors in Qdrant: {e}")
+            raise
+
+    # Delete collection (for testing and cleanup)
+    def delete_collection(self, collection_name: str):
+        try:
+            self.client.delete_collection(collection_name=collection_name)
+            logger.info(f"✅ Collection '{collection_name}' deleted successfully.")
+        except Exception as e:
+            logger.error(f"❌ Failed to delete collection '{collection_name}': {e}")
             raise
 
 # Singleton instance for application-wide use

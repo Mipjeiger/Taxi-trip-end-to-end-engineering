@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List
 import json
+import uuid
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,17 +42,18 @@ class EvidentlyMonitor:
                 "tokens_used": tokens_used,
                 "cost": cost,
                 "model": model,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat() # Optional: for time-based post-processing in Evidently
             }
 
             # Store in analytics database
             insert_query = text("""
                 INSERT INTO analytics.llm_interactions
-                (user_id, session_id, prompt, response, response_time_ms, tokens_used, cost, created_at)
-                VALUES (:user_id, :session_id, :prompt, :response, :response_time_ms, :tokens_used, :cost, CURRENT_TIMESTAMP)
+                (interaction_id , user_id, session_id, prompt, response, response_time_ms, tokens_used, cost, created_at)
+                VALUES (:interaction_id, :user_id, :session_id, :prompt, :response, :response_time_ms, :tokens_used, :cost, CURRENT_TIMESTAMP)
             """)
             
             await db.execute(insert_query, {
+                "interaction_id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "session_id": session_id,
                 "prompt": prompt,

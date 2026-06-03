@@ -72,19 +72,12 @@ class LLMMonitor:
     def extract_features(self, prompt: LLMPrompt) -> Optional[LLMFeatureSet]:
         """Extract features from LLM interaction for monitoring"""
         try:
-            # Placeholder feature extraction logic - replace with actual NLP processing
             response_time = prompt.response_time_ms
             prompt_length = len(prompt.prompt.split())
             response_length = len(prompt.response.split())
-
-            # Sentiment analysis
-            sentiment = self._analyze_sentiment(prompt.response)
-
-            # Entity recognition/extraction
-            entity_count = len([w for w in prompt.response.split() if w[0].isupper()])  # Simple heuristic for entities
-
-            # Complexity score (0-1)
-            complexity = min(1.0, len(prompt.response) / 500.0)
+            sentiment = self._analyze_sentiment(prompt.response)  # Sentiment analysis
+            entity_count = len([w for w in prompt.response.split() if w[0].isupper()])  # Entity recognition/extraction
+            complexity = min(1.0, len(prompt.response) / 500.0)  # Complexity score (0-1)
 
             features = LLMFeatureSet(
                 timestamp=prompt.timestamp,
@@ -124,47 +117,6 @@ class LLMMonitor:
         except:
             return "neutral"
         
-    def generate_report(self) -> Optional[str]:
-        """Generate Evidently AI report for LLM feature drift detection"""
-        try:
-            if not self.features_file.exists():
-                logger.warning("⚠️ No features data available to generate report.")
-                return None
-            
-            # Load data from storage
-            df = self._load_features_data()
-
-            if df.empty or len(df) < 2:
-                logger.warning("⚠️ Not enough data to generate report (need at least 2 records).")
-                return None
-            
-            # Split reference (first 50%) and current (last 50%) datasets
-            split_idx = len(df) // 2
-            reference_df = df.iloc[:split_idx] # First 50% as reference
-            current_df = df.iloc[split_idx:] # Last 50% as current
-
-            # Create Evidently report
-            report = Report(metrics=[
-                DataSummaryPreset()
-            ])
-
-            report.run(
-                reference_data=reference_df,
-                current_data=current_df,
-                column_mapping=None
-            )
-
-            # Save report to HTML file
-            report_path = self.reports_dir / f"llm_report_{datetime.now().isoformat()}.html"
-            report.save_html(str)(report_path)
-
-            logger.info(f"✅ Generated LLM report at {report_path}")
-            return str(report_path)
-        
-        except Exception as e:
-            logger.error(f"❌ Failed to generate LLM report: {e}")
-            return None
-        
     def _load_features_df(self) -> pd.DataFrame:
         """Load features from JSON file"""
         try:
@@ -177,16 +129,56 @@ class LLMMonitor:
                     if line.strip():
                         data.append(json.loads(line)) # Inserting data as dicts to preserve types
 
-            # Convert to DataFrame
-            df = pd.DataFrame(data)
+            if not data:
+                return pd.DataFrame()  # Return empty DataFrame if no data
+
+            df = pd.DataFrame(data)  # Convert to DataFrame
             if "timestamp" in df.columns:
                 df["timestamp"] = pd.to_datetime(df["timestamp"])
-            
             return df
         
         except Exception as e:
             logger.error(f"❌ Failed to load features data: {e}")
             return pd.DataFrame()
+    
+    def generate_report(self) -> Optional[str]:
+        """Generate Evidently AI report for LLM feature drift detection"""
+        try:
+            if not self.features_file.exists():
+                logger.warning("⚠️ No features data available to generate report.")
+                return None
+            
+            # Load data from storage
+            df = self._load_features_df()
+
+            if df.empty or len(df) < 2:
+                logger.warning("⚠️ Not enough data to generate report (need at least 2 records).")
+                return None
+            
+            # Split reference (first 50%) and current (last 50%) datasets
+            split_idx = max(1, len(df) // 2)  # Ensure at least one record in reference
+            reference_df = df.iloc[:split_idx].drop(columns=['timestamp', 'sentiment'], errors='ignore') # First 50% as reference
+            current_df = df.iloc[split_idx:].drop(columns=['timestamp', 'sentiment'], errors='ignore') # Last 50% as current
+
+            # Create Evidently report
+            report = Report(metrics=[DataSummaryPreset()])
+            report.run(
+                reference_data=reference_df,
+                current_data=current_df,
+                column_mapping=None
+            )
+
+            # Save report to HTML file
+            report_path = self.reports_dir / f"llm_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            report.save_html(str)(report_path)
+
+            logger.info(f"✅ Generated LLM report at {report_path}")
+            return str(report_path)
+        
+        except Exception as e:
+            logger.error(f"❌ Failed to generate LLM report: {e}")
+            return None
+        
         
     def get_statistics(self) -> Dict[str, Any]:
         """Get LLM Statistics"""
@@ -196,17 +188,18 @@ class LLMMonitor:
             if df.empty:
                 return {"message": "No data available"}
             
+            numeric_cols = ["prompt_length", "response_length", "response_time_ms", "tokens_used", "complexity_score"]
+            
             # statistics
             stats = {
                 "total_interactions": len(df),
-                "avg_response_time_ms": float(df["response_time_ms"].mean()),
-                "avg_tokens_used": float(df["tokens_used"].mean()),
-                "avg_prompt_length": float(df["prompt_length"].mean()),
-                "avg_response_length": float(df["response_length"].mean()),
-                "avg_complexity_score": float(df["complexity_score"].mean()),
+                "avg_response_time_ms": round(float(df["response_time_ms"].mean()), 2),
+                "avg_tokens_used": round(float(df["tokens_used"].mean()), 2),
+                "avg_prompt_length": round(float(df["prompt_length"].mean()), 2),
+                "avg_response_length": round(float(df["response_length"].mean()), 2),
+                "avg_complexity_score": round(float(df["complexity_score"].mean()), 2),
                 "sentiment_distribution": df["sentiment"].value_counts().to_dict(),
-                "prompt_score_correlation": df[["prompt_length", "response_length", "response_time_ms", "tokens_used", "complexity_score"]].corr().mean().to_dict(),
-                "qualitative_review": df["response"].sample(n=min(7, len(df)), random_state=42).tolist()  # Sample 7 responses for qualitative review
+                "prompt_score_correlation": df[numeric_cols].corr().mean().round(4).to_dict(),
             }
 
             return stats

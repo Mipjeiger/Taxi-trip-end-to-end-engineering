@@ -81,17 +81,21 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
         try:
             vector = request.context.get("vector", []) if isinstance(request.context, dict) else []
             logger.info(f"🔍 Storing conversation user: {request.user_id} in Qdrant with session_id: {session_id}")
-            qdrant_vector_db.add_point(
-                collection_name="chat_history",
-                point_id=hash(session_id) % (10**9), # Simple hash for unique ID
-                text=vector, # Store vector for future similarity search
-                metadata={
-                    "user_id": request.user_id,
-                    "session_id": session_id,
-                    "response": response,
-                    "timestamp": time.time()
-                }
-            )
+            
+            if vector:
+                    qdrant_vector_db.add_point(
+                    collection_name="chat_history",
+                    point_id=str(hash(session_id) % (10**9)), # Simple hash for unique ID
+                    vector=vector, # Store vector for future similarity search
+                    metadata={
+                        "user_id": request.user_id,
+                        "session_id": session_id,
+                        "response": response,
+                        "timestamp": time.time()
+                    }
+                )
+            else:
+                logger.warning("⚠️ No vector provided in context, skipping Qdrant storage for this interaction.")
         except Exception as e:
             logger.warning(f"⚠️ Failed to store conversation in Qdrant: {e}")
 

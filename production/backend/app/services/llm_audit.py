@@ -62,10 +62,14 @@ class LLMMonitor:
             with open(self.prompts_file, "a") as f:
                 f.write(prompt.model_dump_json() + "\n")
             logger.debug(f"✅ Logged LLM prompt for user_id={prompt.user_id}, session_id={prompt.session_id}")
+
+            # Extract features for monitoring
+            self.extract_features(prompt)
+
         except Exception as e:
             logger.error(f"❌ Failed to log LLM prompt: {e}")
 
-    def extract_features(self, prompt: LLMPrompt) -> LLMFeatureSet:
+    def extract_features(self, prompt: LLMPrompt) -> Optional[LLMFeatureSet]:
         """Extract features from LLM interaction for monitoring"""
         try:
             # Placeholder feature extraction logic - replace with actual NLP processing

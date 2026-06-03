@@ -25,8 +25,8 @@ class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
     messages: List[Message] = List[Message]
-    temperature: float = Field(default=0.7, ge=0, le=2, description="Sampling temperature for response generation (0-2)")
-    context: Optional[str] = None # Optional context for the LLM to consider in the conversation
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    context: Optional[Dict] = None # Optional context for the LLM to consider in the conversation
 
 class RouteRecommendRequest(BaseModel):
     query: str
@@ -49,7 +49,7 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
     try:
         # Step 1: Search for context using Qdrant
         context_results = []
-        if request.context:
+        if request.context and isinstance(request.context, dict) and request.context.get("vector"):
             logger.info(f"🔍 Searching Qdrant for context related to: {request.context}")
 
             # Create collection if not exists
@@ -60,7 +60,7 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
             logger.info("🔍 Calling search_similar")
             context_results = qdrant_vector_db.search_vector(
                 collection_name="chat_history",
-                query_vector=request.context.get("vector", []), # Assuming context includes a pre-computed vector
+                query_vector=request.context.get["vector"], # Assuming context includes a pre-computed vector
                 limit=3
             )
             logger.info(f"🔍 Found {len(context_results)} relevant context entries in Qdrant")
@@ -79,11 +79,12 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
 
         # Step 4: Store in Qdrant for future context
         try:
+            vector = request.context.get("vector", []) if isinstance(request.context, dict) else []
             logger.info(f"🔍 Storing conversation user: {request.user_id} in Qdrant with session_id: {session_id}")
             qdrant_vector_db.add_point(
                 collection_name="chat_history",
                 point_id=hash(session_id) % (10**9), # Simple hash for unique ID
-                text=user_message,
+                text=vector, # Store vector for future similarity search
                 metadata={
                     "user_id": request.user_id,
                     "session_id": session_id,

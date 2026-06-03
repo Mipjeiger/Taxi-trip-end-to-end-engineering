@@ -1,0 +1,18 @@
+{
+  "user_id": "CNR4352144",
+  "session_id": "session-001",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is best route from pasar baru to cilandak timur? just give short answer"
+    }
+  ],
+  "temperature": 0.7,
+  "context": {
+    "pickup_location": "Pasar Baru",
+    "drop_location": "Cilandak Timur",
+    "ride_distance": 37.98,
+    "is_peak_hour": 0,
+    "vehicle_type": "Motorcycle"
+  }
+}

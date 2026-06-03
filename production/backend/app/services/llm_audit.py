@@ -170,7 +170,7 @@ class LLMMonitor:
 
             # Save report to HTML file
             report_path = self.reports_dir / f"llm_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            report.save_html(str)(report_path)
+            report.save_html(str(report_path))
 
             logger.info(f"✅ Generated LLM report at {report_path}")
             return str(report_path)

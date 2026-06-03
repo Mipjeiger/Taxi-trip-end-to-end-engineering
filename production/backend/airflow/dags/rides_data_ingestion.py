@@ -236,7 +236,7 @@ def load_to_duckdb(**context):
         # Use context manager so lock is released immediately after write
         # ========================================================
         with duckdb.connect(duckdb_path) as conn:
-            conn.register("temp_rides_df", df)
+            conn.register("temp_trips_df", df)
 
             conn.execute(
                 """
@@ -277,13 +277,13 @@ def load_to_duckdb(**context):
                     TRY_CAST(estimated_drop_time_minute AS DOUBLE),
                     TRY_CAST(created_at AS TIMESTAMP),
                     TRY_CAST(completed_at AS TIMESTAMP)
-                FROM temp_rides_df
+                FROM temp_trips_df
                 WHERE ride_id IS NOT NULL
                     AND ride_id IS NOT NULL
             """)
 
             inserted_rows = conn.execute("SELECT COUNT(*) FROM trip").fetchone()[0]
-            logger.info(f"✅ Inserted {inserted_rows} rows into ride table")
+            logger.info(f"✅ Inserted {inserted_rows} rows into trip table")
 
             task_instance.xcom_push(
                 key="rows_loaded",
@@ -292,7 +292,7 @@ def load_to_duckdb(**context):
 
             return {
                 "rows_loaded": inserted_rows,
-                "table": "ride",
+                "table": "trip",
                 "timestamp": datetime.now().isoformat(),
             }
 
@@ -386,8 +386,8 @@ def data_quality_checks(**context):
             # Total Rows Check
             # ========================================================
 
-            total_rows = conn.execute("SELECT COUNT(*) FROM ride").fetchone()[0]
-            logger.info(f"✅ Total rides rows: {total_rows}")
+            total_rows = conn.execute("SELECT COUNT(*) FROM trip").fetchone()[0]
+            logger.info(f"✅ Total trip rows: {total_rows}")
 
             # ========================================================
             # Row count
@@ -404,7 +404,7 @@ def data_quality_checks(**context):
                     SUM(CASE WHEN ride_id IS NULL THEN 1 ELSE 0 END) AS null_ride_id,
                     SUM(CASE WHEN rider_id IS NULL THEN 1 ELSE 0 END) AS null_rider_id,
                     SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver_id
-                FROM ride
+                FROM trip
                 """
             ).fetchone()
 
@@ -436,7 +436,7 @@ def data_quality_checks(**context):
                 logger.info("✅ All fares valid")
 
             # Duplicate check
-            duplicates = conn.execute("""SELECT COUNT(*) - COUNT(DISTINCE ride_id)
+            duplicates = conn.execute("""SELECT COUNT(*) - COUNT(DISTINCT ride_id)
                                       FROM trip""").fetchone()[0]
             if duplicates > 0:
                 logger.warning(f"⚠️ Found {duplicates} duplicate ride_id entries")

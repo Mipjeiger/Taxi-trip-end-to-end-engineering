@@ -107,7 +107,7 @@ class QdrantVectorDB:
 
             # Assuming vector is provided directly (not generated from text)
             point = PointStruct(
-                id=point_id,
+                id=int(point_id) if str(point_id).isdigit() else abs(hash(point_id)) % (10**9), # Ensure numeric ID for Qdrant
                 vector=vector,
                 payload=metadata # Store metadata for filtering and retrieval
             )

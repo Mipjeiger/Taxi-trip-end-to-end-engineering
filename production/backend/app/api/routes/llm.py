@@ -1,21 +1,55 @@
 import logging
 import time
+import uuid
+import json
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.postgres_db import get_postgres_db
 from app.core.qdrant_client import qdrant_vector_db
 from app.core.evidently_monitor import evidently_monitor
-from app.services.llm_services import llm_service
+from app.services.llm_services import llm_service, LLMService
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-from app.services.llm_services import LLMService
 from datetime import datetime
-import uuid
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
 
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# ================================================================
+# Lazy-loaded embedding model (loads once, reused across requests)
+# ================================================================
+_embedding_model = None
+
+def get_embedding_model():
+    global _embedding_model
+    if _embedding_model is None:
+        try:
+            from fastembed import TextEmbedding
+            _embedding_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+            logger.info("✅ Loaded embedding model: BAAI/bge-small-en-v1.5")
+        except Exception as e:
+            logger.error(f"❌ Failed to load embedding model: {e}")
+            _embedding_model = None
+    return _embedding_model
+
+def embed_text(text: str) -> Optional[List[float]]:
+    """Generate embedding vector from text. Returns None on failure."""
+    try:
+        model = get_embedding_model()
+        if model is None:
+            return None
+        vectors = list(model.embed([text])) # returns generator, convert to list
+        return vectors[0].tolist()
+    except Exception as e:
+        logger.error(f"❌ Embedding generation failed for text: {text[:50]}... Error: {e}")
+        return None
+
+# ================================================================
+# Request Models
+# ================================================================
 
 class Message(BaseModel):
     role: str = Field(..., pattern="^(system|user|assistant)$")
@@ -40,6 +74,10 @@ class PriceQuestionRequest(BaseModel):
     question: str
     price_context: Optional[float] = None
 
+# ===============================================================
+# Chat Endpoint
+# ===============================================================
+
 @router.post("/chat")
 async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_postgres_db)):
     """Generate Chat endpoint with LLM, Qdrant vector search, and Evidently monitoring."""
@@ -47,59 +85,79 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
     session_id = request.session_id or str(uuid.uuid4())
 
     try:
-        # Step 1: Search for context using Qdrant
-        context_results = []
-        if request.context and isinstance(request.context, dict) and request.context.get("vector"):
-            logger.info(f"🔍 Searching Qdrant for context related to: {request.context}")
-
-            # Create collection if not exists
-            logger.info("🔍 About to create/check chat_history collection")
-            qdrant_vector_db.create_collection("chat_history")
-
-            # Search for similar conversation history based on the provided context
-            logger.info("🔍 Calling search_similar")
-            context_results = qdrant_vector_db.search_vector(
-                collection_name="chat_history",
-                query_vector=request.context.get["vector"], # Assuming context includes a pre-computed vector
-                limit=3
-            )
-            logger.info(f"🔍 Found {len(context_results)} relevant context entries in Qdrant")
-
-        # Step 2: Call LLM with context
         user_message = request.messages[-1].content if request.messages else ""
-        logger.info(f"💬 LLM Request: {user_message}")
 
-        messages = [msg.model_dump() for msg in request.messages]
-        response = await llm_service.chat(messages, request.temperature)
+        # Step 1: Embed user message for context search
+        query_vector = embed_text(user_message)
 
-        # Step 3: Calculate metrics
-        response_time_ms = int((time.time() - start_time) * 1000)
-        tokens_estimate = len(user_message.split()) + len(response.split()) # Simple token estimation
-        cost_estimate = (tokens_estimate / 1000) * 0.0001 # Groq pricing estimate
-
-        # Step 4: Store in Qdrant for future context
-        try:
-            vector = request.context.get("vector", []) if isinstance(request.context, dict) else []
-            logger.info(f"🔍 Storing conversation user: {request.user_id} in Qdrant with session_id: {session_id}")
-            
-            if vector:
-                    qdrant_vector_db.add_point(
+        # Step 2: Search Qdrant for similar conversation history if context is provided
+        context_results = []
+        if query_vector:
+            try:
+                qdrant_vector_db.create_collection(
+                    "chat_history",
+                    vector_size=384 # BAAI/bge-small-en-v1.5 vector size
+                )
+                context_results = qdrant_vector_db.search_vector(
                     collection_name="chat_history",
-                    point_id=str(hash(session_id) % (10**9)), # Simple hash for unique ID
-                    vector=vector, # Store vector for future similarity search
+                    query_vector=query_vector,
+                    limit=3
+                )
+                logger.info(f"🔍 Retrieved {len(context_results)} context results from Qdrant for user: {request.user_id}")
+            except Exception as e:
+                logger.error(f"❌ Error occurred while searching Qdrant: {e}")
+
+        # Step 3: Build message for LLM with optional context ijnection
+        messages = [msg.model_dump() for msg in request.messages]
+
+        if context_results:
+            past_context = "\n".join([f"- {r['metadata'].get('prompt', '?')} -> {r['metadata'].get('response', '?')[:100]}"]
+                                     for r in context_results)
+            context_system_msg = {
+                "role": "system",
+                "content": f"Relevant past interactions:\n{past_context}\nUse this information to provide a better response."
+            }
+            messages = [context_system_msg] + messages
+
+        # Inject request.context dict if provided
+        if request.context:
+            messages = [{
+                "role": "system",
+                "content": f"Current context:\n{json.dumps(request.context, indent=2)}"
+            }] + messages
+
+        # Step 4: Call LLm
+        logger.info(f"💬 LLM Request: {user_message}")
+        response = await llm_service.chat(messages=messages, temperature=request.temperature)
+
+        # Step 5: Calculate metrics
+        response_time_ms = int((time.time() - start_time) * 1000)
+        tokens_estimate = len(user_message.split()) + len(response.split())
+        cost_estimate = (tokens_estimate / 1000) * 0.0001
+
+        # Step 6: Store in Qdrant
+        if query_vector:
+            try:
+                point_id = abs(hash(session_id + user_message)) % (10**9)  # Simple hash for point ID
+                qdrant_vector_db.add_point(
+                    collection_name="chat_history",
+                    point_id=str(point_id),
+                    vector=query_vector,
                     metadata={
                         "user_id": request.user_id,
                         "session_id": session_id,
-                        "response": response,
-                        "timestamp": time.time()
+                        "prompt": user_message,
+                        "response": response[:500], # Truncate response for metadata storage (Save space)
+                        "response_time_ms": response_time_ms,
                     }
                 )
-            else:
-                logger.warning("⚠️ No vector provided in context, skipping Qdrant storage for this interaction.")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to store conversation in Qdrant: {e}")
+                logger.info(f"✅ Stored chat interaction in Qdrant with point ID: {point_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to store chat interaction in Qdrant: {e}")
+        else:
+            logger.warning(f"⚠️ Skipping Qdrant storage due to embedding failure for user: {request.user_id}")
 
-        # Step 5: Log metrics with Evidently
+        # Step 7: Log to Evidently for LLM Audit - PostgreSQL storage database in llm interactions
         await evidently_monitor.log_llm_response(
             db=db,
             user_id=request.user_id,
@@ -118,19 +176,20 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
                 "response_time_ms": response_time_ms,
                 "tokens": tokens_estimate,
                 "cost": f"${cost_estimate:.6f}",
-                "context_retrieved": len(context_results)
+                "context_retrieved": len(context_results),
+                "vector_stored": query_vector is not None
             }
         }
     
     except Exception as e:
-        logger.error(f"❌ Error in chat endpoint: {e}")
+        logger.error(f"Error occurred while processing LLM request: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {e}")
 
 @router.post("/recommend-route")
 async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredictor = Depends(get_ml_predictor)):
     """Get route recommendation from natural language query."""
     llm = LLMService()
-    recommendation = await llm.recommend_route(request.query, request.context)
+    recommendation = await llm.recommend_routes(request.query, request.context)
 
     # If we got structured data, optionally copute real ETA/price using ML
     if "pickup" in recommendation and "drop" in recommendation:

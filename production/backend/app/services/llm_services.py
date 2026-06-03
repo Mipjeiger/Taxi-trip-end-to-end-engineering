@@ -25,7 +25,12 @@ class LLMService:
             logger.error("❌ LLM_PROVIDER is not set in environment variables. Defaulting to 'groq'.")
 
     # Create groq as primary LLM provider, with abstraction for future providers
-    async def chat(self, messages: List[Dict[str, str]], temperature: float = 0.7) -> str:
+    async def chat(self, 
+                   messages: List[Dict[str, str]], 
+                   temperature: float = 0.7,
+                   user_id: str = "system",
+                   session_id: str = "default"
+    ) -> str:
         """Generate chat response from LLM"""
         # Validate all messages have required fields before making API call
         for i, msg in enumerate(messages):
@@ -44,11 +49,19 @@ class LLMService:
         logger.info(f"✅ Validated {len(messages)} messages for LLM chat request.")
 
         if not self.provider or self.provider == "groq":
-            return await self._groq_chat(messages=messages, temperature=temperature)
+            return await self._groq_chat(messages=messages, 
+                                         temperature=temperature,
+                                         user_id=user_id,
+                                         session_id=session_id)
         else:
             raise NotImplementedError(f"LLM provider {self.provider} not implemented.")
         
-    async def _groq_chat(self, messages: List[Dict[str, str]], temperature: float) -> str:
+    async def _groq_chat(self, 
+                         messages: List[Dict[str, str]], 
+                         temperature: float,
+                         user_id: str = "system",
+                         session_id: str = "default"
+    ) -> str:
         """Call Groq API with error handling."""
         
         # Start LLM time for monitoring
@@ -113,8 +126,8 @@ class LLMService:
 
                 prompt_record = LLMPrompt(
                     timestamp=datetime.utcnow(),
-                    user_id="system",  # In real implementation, use actual user ID
-                    session_id="default",  # In real implementation, use actual session ID
+                    user_id=user_id,  # In real implementation, use actual user ID
+                    session_id=session_id,  # In real implementation, use actual session ID
                     prompt=user_message,
                     model=self.model,
                     temperature=temperature,

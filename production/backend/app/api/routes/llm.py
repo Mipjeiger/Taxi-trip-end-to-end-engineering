@@ -128,7 +128,10 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
 
         # Step 4: Call LLm
         logger.info(f"💬 LLM Request: {user_message}")
-        response = await llm_service.chat(messages=messages, temperature=request.temperature)
+        response = await llm_service.chat(messages=messages, 
+                                          temperature=request.temperature,
+                                          user_id=request.user_id,
+                                          session_id=session_id)
 
         # Step 5: Calculate metrics
         response_time_ms = int((time.time() - start_time) * 1000)

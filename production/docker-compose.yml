@@ -76,7 +76,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    restart: unless-stopped
+    restart: unless-stopped 
 
   # Backend FastAPI service
   backend:
@@ -106,9 +106,9 @@ services:
       QDRANT_CLUSTER_URL: ${QDRANT_CLUSTER_URL}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_PORT: ${POSTGRES_PORT}
       POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: 5432
+      POSTGRES_HOST: postgres
     ports:
       - "8000:8000"
     volumes:
@@ -159,13 +159,17 @@ services:
     image: metabase/metabase:latest
     container_name: metabase
     ports:
-      - "3001:3001"   
+      - "4001:4001"   
     volumes:
       - metabase_data:/metabase-data
     environment:
-      MD_DB_TYPE: h2
-      MD_DB_FILE: /metabase-data/metabase.db
-      MD_PORT: 3001
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: ${POSTGRES_DB}
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      MB_DB_HOST: postgres
+      MB_DB_PORT: 5432
+      MB_PORT: 4001
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,7 +177,7 @@ services:
       - taxi_trip_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:4001/api/health"]
       interval: 30s
       timeout: 10s
       retries: 5

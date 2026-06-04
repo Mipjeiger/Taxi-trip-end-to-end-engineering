@@ -25,13 +25,28 @@ class LLMService:
             logger.error("❌ LLM_PROVIDER is not set in environment variables. Defaulting to 'groq'.")
 
     # Create groq as primary LLM provider, with abstraction for future providers
-    async def chat(self, 
-                   messages: List[Dict[str, str]], 
-                   temperature: float = 0.7,
-                   user_id: str = "system",
-                   session_id: str = "default"
-    ) -> str:
-        """Generate chat response from LLM"""
+    async def chat(self, messages, temperature=0.7, user_id="system", session_id="default"):
+        
+        # Inject language instruction if no system message exists
+        has_system = any(m.get("role") == "system" if isinstance(m, dict)
+                         else m.role == "system" for m in messages)
+        if not has_system:
+            lang_msg = {
+                "role": "system",
+                "content": """
+                You are TaxiRide AI Assistant.
+                
+                Rules:
+                - Reply in the same language used by the user.
+                - Indonesian input → Indonesian output.
+                - English input → English output.
+                - Do not switch languages unless asked.
+                - Be concise and helpful.
+                - Never repeat greeting messages.
+                - Answer the question directly.
+                """
+                }
+            messages = [lang_msg] + list(messages)
         # Validate all messages have required fields before making API call
         for i, msg in enumerate(messages):
 

@@ -12,21 +12,37 @@ export interface LLMResponse {
 }
 
 export interface RouteRecommendation {
-    route: string;
-    estimated_time: number;
-    description: string;
+    pickup?: string;
+    drop?: string;
+    vehicle_type?: string;
+    reasoning?: string;
+    estimated_time?: number;
+    estimated_price?: number;
+    description?: string;
+    raw?: string;
+    error?: string;
 }
 
 export const llmAPI = {
     // Chat endpoint - send messages and get response
-    chat: async (messages: ChatMessage[], temperature: number = 0.7): Promise<string> => {
+    chat: async (messages: ChatMessage[], 
+                temperature: number = 0.7,
+                userId: string = "guest-user",
+                sessionId?: string
+            ): Promise<{ response: string; session_id: string }> => {
         try {
             const response = await apiClient.post('/api/llm/chat', {
+                user_id: userId,
+                session_id: sessionId || null,
                 messages,
                 temperature,
+                context: null, 
             });
             // Handle both direct string response and nested response object
-            return response.data.response || response.data;
+            return {
+                response: response.data.response,
+                session_id: response.data.session_id
+            };
         } catch (error) {
             console.error('Chat API error:', error);
             throw error;
@@ -55,7 +71,7 @@ export const llmAPI = {
                 route_context: routeContext,
             });
             // Handle both answer and response fields
-            return response.data.answer || response.data.response || response.data;
+            return response.data.answer || response.data.response || '';
         } catch (error) {
             console.error('Ask route error:', error);
             throw error;
@@ -70,7 +86,7 @@ export const llmAPI = {
                 price_context: priceContext,
             });
             // Handle both answer and response fields
-            return response.data.answer || response.data.response || response.data;
+            return response.data.answer || response.data.response || '';
         } catch (error) {
             console.error('Ask price error:', error);
             throw error;

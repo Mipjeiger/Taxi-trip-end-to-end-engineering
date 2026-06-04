@@ -3,3 +3,6 @@
 {"timestamp":"2026-06-03T11:46:28.102177","prompt_length":14,"response_length":52,"response_time_ms":1087.904453277588,"tokens_used":215,"sentiment":"neutral","entity_count":34,"complexity_score":0.528}
 {"timestamp":"2026-06-03T15:11:42.752544","prompt_length":8,"response_length":12,"response_time_ms":627.901554107666,"tokens_used":118,"sentiment":"neutral","entity_count":1,"complexity_score":0.15}
 {"timestamp":"2026-06-03T15:13:37.440171","prompt_length":7,"response_length":39,"response_time_ms":917.5069332122803,"tokens_used":147,"sentiment":"neutral","entity_count":4,"complexity_score":0.442}
+{"timestamp":"2026-06-04T14:23:40.755881","prompt_length":11,"response_length":108,"response_time_ms":1450.3567218780518,"tokens_used":310,"sentiment":"neutral","entity_count":49,"complexity_score":1.0}
+{"timestamp":"2026-06-04T14:24:15.074901","prompt_length":11,"response_length":130,"response_time_ms":956.0532569885254,"tokens_used":315,"sentiment":"neutral","entity_count":36,"complexity_score":1.0}
+{"timestamp":"2026-06-04T14:57:56.363247","prompt_length":10,"response_length":81,"response_time_ms":1342.8092002868652,"tokens_used":256,"sentiment":"neutral","entity_count":32,"complexity_score":0.888}

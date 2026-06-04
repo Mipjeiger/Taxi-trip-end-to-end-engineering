@@ -162,10 +162,10 @@ async def lifespan(app: FastAPI):
         # Load recommendation models
         logger.info("Loading recommendation models...")
         try:
-            vehicle_recommender = VehicleRecommender()
-            surge_recommender = SurgeRecommender()
+            vehicle_recommender = VehicleRecommender(redis_client=redis_client)
+            surge_recommender = SurgeRecommender(redis_client=redis_client)
             churn_recommender = ChurnRecommender()
-            matching_recommender = MatchingRecommender()
+            matching_recommender = MatchingRecommender(redis_client=redis_client)
             
             set_vehicle_recommender(vehicle_recommender)
             set_surge_recommender(surge_recommender)

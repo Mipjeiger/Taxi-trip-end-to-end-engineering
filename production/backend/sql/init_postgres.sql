@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS analytics.drivers (
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+SELECT * FROM analytics.drivers;
+
 -- ================================================================
 -- Table 4: LLM interactions audit log
 -- ================================================================
@@ -83,7 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_session_id     ON analytics.llm_interactions(
 -- ================================================================
 
 -- View 1: Rides summary by status
-CREATE VIEW IF NOT EXISTS analytics.rides_by_status AS
+CREATE VIEW analytics.rides_by_status AS
 SELECT 
     status,
     COUNT(*) as total_rides,
@@ -94,18 +96,19 @@ FROM analytics.trip
 GROUP BY status;
 
 -- View 2: Driver performance metrics
-CREATE VIEW IF NOT EXISTS analytics.driver_metrics AS
+CREATE OR REPLACE VIEW analytics.driver_metrics AS
 SELECT 
-    driver_id,
-    COUNT(ride_id) as total_rides,
-    AVG(rating) as avg_rating,
-    SUM(actual_fare) as total_earnings
-FROM analytics.trip
-WHERE driver_id IS NOT NULL
-GROUP BY driver_id;
+    t.driver_id,
+    COUNT(t.ride_id) as total_rides,
+    AVG(d.rating) as avg_rating,
+    SUM(t.actual_fare) as total_earnings
+FROM analytics.trip t
+JOIN analytics.drivers d ON t.driver_id = d.driver_id
+WHERE t.driver_id IS NOT NULL
+GROUP BY t.driver_id;
 
 -- View 3: Hourly ride trends
-CREATE VIEW IF NOT EXISTS hourly_ride_trends AS
+CREATE VIEW analytics.hourly_ride_trends AS
 SELECT 
     DATE_TRUNC('hour', created_at) as hour,
     COUNT(*) as ride_count,

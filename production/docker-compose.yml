@@ -281,6 +281,7 @@ services:
       - ./backend/airflow/dags:/opt/airflow/dags
       - ./backend/airflow/plugins:/opt/airflow/plugins
       - ./backend/airflow/config:/opt/airflow/config
+      - ./backend/database:/opt/airflow/database
       - airflow_logs_volume:/opt/airflow/logs
     ports:
       - "8080:8080"
@@ -343,6 +344,7 @@ services:
       - ./backend/airflow/dags:/opt/airflow/dags
       - ./backend/airflow/plugins:/opt/airflow/plugins
       - ./backend/airflow/config:/opt/airflow/config
+      - ./backend/database:/opt/airflow/database
       - airflow_logs_volume:/opt/airflow/logs
     command: bash -c "airflow db migrate && airflow scheduler"
     depends_on:

@@ -16,7 +16,8 @@ class VehicleRecommender:
         Recommend a vehicle type based on user context and historical data compatible to redis with DATABASE_PATH.
         In real scenario, fetch user embedding and compute similarity with vehicle embeddings."""
         # Simulate fetching user embedding from Redis
-        user_embedding = await self.redis.get(f"user_embedding:{user_id})")
+        user_embedding = await self.redis.get(f"user_embedding:{user_id}")
+
         if user_embedding is None:
             user_embedding = np.random.rand(128)  # Dummy embedding for new users
             await self.redis.set(f"user_embedding:{user_id}", user_embedding.tobytes())
@@ -24,7 +25,7 @@ class VehicleRecommender:
             user_embedding = np.frombuffer(user_embedding, dtype=np.float32)
         
         # Simulate vehicle type by embedding to database path
-        df = pd.read_parquet(settings.DATABASE_URL)
+        df = pd.read_parquet(settings.PARQUET_PATH)
         vehicle_typess = df['Vehicle Type'].unique()
         vehicle_embeddings = {vt: np.random.rand(128) for vt in vehicle_typess}
 

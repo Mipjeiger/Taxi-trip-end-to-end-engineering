@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def _compute_features(pickup_encoded: int, drop_encoded: int) -> dict:
     """
-    Derive hour/day/trig features from current time.
+    Derive hour/day/trip features from current time.
     These mirror what your ML model was trained on.
     """
     now = datetime.now(timezone.utc)
@@ -31,57 +31,34 @@ def _compute_features(pickup_encoded: int, drop_encoded: int) -> dict:
     }
 
 async def create_ride_in_db(
-    db: AsyncSession,
-    user_id: str,
+    db,
+    rider_id: str,
     pickup_location: str,
-    drop_location: str,
-    vehicle_type: str,
-    price: float,
-    estimated_pickup_time_minute: float,
-    estimated_drop_time_minute: float,
-    pickup_encoded: int,
-    drop_encoded: int,
-    route_cluster: int,
-    ride_distance: float,
-    pickup_lat: float,
-    pickup_lon: float,
-    drop_lat: float,
-    drop_lon: float,
-    avg_rating: float = 0.0,
+    dropoff_location: str,
+    estimated_fare: float,
+    distance_km: float,
+    duration_minute: float,
+    status: str
 ) -> Ride:
     """
     Insert a new ride row and return the ORM object.
     Called by the /rides/book route handler.
     """
-    features = _compute_features(pickup_encoded, drop_encoded)
-
     ride = Ride(
-        id=str(uuid.uuid4()),
-        user_id=user_id,
+        ride_id=f"RIDE-{uuid.uuid4().hex[:12].upper()}",
+        rider_id=rider_id,
         pickup_location=pickup_location,
-        drop_location=drop_location,
-        vehicle_type=vehicle_type,
-        price=price,
-        estimated_pickup_time_minute=estimated_pickup_time_minute,
-        estimated_drop_time_minute=estimated_drop_time_minute,
-        booking_status="pending",
-        driver_status=None,
-        avg_rating=avg_rating,
-        pickup_encoded=pickup_encoded,
-        drop_encoded=drop_encoded,
-        route_cluster=route_cluster,
-        ride_distance=ride_distance,
-        pickup_lat=pickup_lat,
-        pickup_lon=pickup_lon,
-        drop_lat=drop_lat,
-        drop_lon=drop_lon,
-        created_at=datetime.now(timezone.utc),
-        **features,   # hour, day_of_week, is_peak_hour, is_weekend, is_night, *_sin, *_cos
+        dropoff_location=dropoff_location,
+        status=status,
+        estimated_fare=estimated_fare,
+        distance_km=distance_km,
+        duration_minute=duration_minute,
+        created_at=datetime.now()
     )
     db.add(ride)
     await db.commit()
     await db.refresh(ride)
-    logger.info(f"✅ Ride created: {ride.id} for user {user_id}")
+
     return ride
     
 async def complete_ride_in_db(

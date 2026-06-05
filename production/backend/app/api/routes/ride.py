@@ -103,33 +103,6 @@ async def create_ride_with_prediction(
         await db.rollback()
         logger.error(f"❌ Ride creation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to create ride: {str(e)}")
-
-
-@router.get("/history/{user_id}", response_model=list[RideResponse])
-async def get_ride_history(
-    user_id: str,
-    limit: int = 100,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get ride history for user.
-    
-    Parameters:
-    - user_id: User ID (path parameter)
-    - limit: Maximum number of rides to return (default 100)
-    """
-    try:
-        query = select(Ride).where(Ride.user_id == user_id)
-        query = query.order_by(Ride.created_at.desc()).limit(limit)
-        
-        result = await db.execute(query)
-        rides = result.scalars().all()
-        
-        return [RideResponse.model_validate(ride) for ride in rides]
-    
-    except Exception as e:
-        logger.error(f"Error fetching ride history: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
     
 @router.post("/rides/book")
 async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_db)):

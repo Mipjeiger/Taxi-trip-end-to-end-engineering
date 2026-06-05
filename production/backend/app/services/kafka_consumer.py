@@ -2,9 +2,11 @@ import logging
 import json
 import threading
 import time
+import uuid
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from typing import List
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +28,13 @@ try:
 except ImportError:
     KAFKA_AVAILABLE = False
     logger.warning("⚠️ confluent_kafka library is not installed. Kafka consumer will be unavailable.")
+
+# Dependencies for PostgreSQL insertion
+POSTGRES_USER = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT")
+POSTGRES_DB = os.getenv("POSTGRES_DB")
 
 # ================================================================
 # Kafka Event Consumer with Databricks Persistence
@@ -57,7 +66,7 @@ class EventConsumer:
         try:
             config = {
                 "bootstrap.servers": self.bootstrap_servers,
-                "group.id": "events-to-duckdb",
+                "group.id": "events-to-postgres",
                 "auto.offset.reset": "earliest",
                 "enable.auto.offset.store": False,  
                 "enable.auto.commit": False,  # Manual commit after batch is processed
@@ -66,15 +75,67 @@ class EventConsumer:
                 "socket.timeout.ms": 60000,
                 "isolation.level": "read_committed" # Offset commit strategy to ensure we only read committed messages
             }
-            
             self.consumer = Consumer(config)
             self.consumer.subscribe(self.TOPICS)
-            logger.info(f"✅ Kafka consumer connected to: {self.bootstrap_servers}")
-            logger.info(f"   Topics: {self.TOPICS}")
-            logger.info(f"   Group ID: events-to-duckdb")
+            logger.info(f"✅ Kafka consumer connected | topics: {self.TOPICS}")
         except Exception as e:
             logger.error(f"❌ Failed to connect to Kafka: {e}")
             raise
+
+    def _insert_batch_postgres(self, batch: List[dict]):
+        """
+        Insert batch of events into analytics.taxi_trip_data_events (Postgresql database) using psycopg2.
+        Uses a sync connection since this runs in a background thread (not async context).
+        Matches schema: -> Postgresql Database on analytics.taxi_trip_data_events
+        """
+        import psycopg2
+        import psycopg2.extras
+        
+
+        conn = None
+        try:
+            conn = psycopg2.connect(
+                host=POSTGRES_HOST,
+                port=POSTGRES_PORT,
+                database=POSTGRES_DB,
+                user=POSTGRES_USER,
+                password=POSTGRES_PASSWORD
+            )
+
+            with conn.cursor() as cur:
+                # User execute_values for efficient batch insert
+                psycopg2.extras.execute_values(
+                    cur,
+                    """
+                    INSERT INTO analytics.taxi_trip_data_events
+                    (event_id, event_type, user_id, topic, event_data, event_timestamp)
+                    VALUES %s
+                    ON CONFLICT (event_id) DO NOTHING
+                    """,
+                    [
+                        (
+                            str(uuid.uuid4()), # event_id
+                            row.get("event_type", "unknown"), # event_type
+                            row.get("user_id"), # user_id
+                            row.get("topic", "unknown"), # topic
+                            json.dumps(row.get("event_data", {})), # event_data (JSON)
+                            row.get("event_timestamp", time.time()) # event_timestamp
+                        )
+                        for row in batch
+                    ],
+                )
+            conn.commit()
+            logger.info(f"✅ Inserted batch of {len(batch)} events into Postgres.")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to insert batch into Postgres: {e}")
+            if conn:
+                conn.rollback()
+            raise
+
+        finally:
+            if conn:
+                conn.close()
 
     def start(self):
         """Start listening/consuming to Kafka events"""
@@ -85,22 +146,21 @@ class EventConsumer:
             while not self._stop_event.is_set():
                 msg = self.consumer.poll(timeout=1.0)
 
+                # No message - check flush interval
                 if msg is None:
-                    # Check if batch flush interval has passed
                     if time.time() - self._last_flush >= self.FLUSH_INTERVAL and self._batch:
                         self._flush_batch()
                     continue
-
+                
+                # Kafka error handling
                 if msg.error():
-                    # Check for end of partition (not an error, just informational)
-                    error_code = msg.error().code()
-                    if error_code == KafkaError._PARTITION_EOF:
+                    if msg.error().code() == KafkaError._PARTITION_EOF:
                         logger.debug(f"✅ End of partition for {msg.topic()}[{msg.partition()}]")
                     else:
                         logger.error(f"❌ Kafka error: {msg.error()}")
                     continue
 
-                # Parse message
+                # Parse and batch message
                 try:
                     event_data = json.loads(msg.value().decode("utf-8"))
                     self._batch.append({
@@ -116,11 +176,11 @@ class EventConsumer:
 
                 # Flush if batch size is reached
                 if len(self._batch) >= self.BATCH_SIZE:
-                    self._flush_batch(msg)
+                    self._flush_batch(last_msg=msg)
 
-                # Check flush interval
-                if time.time() - self._last_flush >= self.FLUSH_INTERVAL:
-                    self._flush_batch()
+                # Flush on time interval
+                elif time.time() - self._last_flush >= self.FLUSH_INTERVAL:
+                    self._flush_batch(last_msg=msg)
 
         except Exception as e:
             logger.error(f"❌ Kafka consumer encountered an error: {e}")
@@ -135,21 +195,20 @@ class EventConsumer:
             return
         
         try:
+            self.insert_batch_postgres(self._batch)
 
-            # Insert to DuckDB
-            duckdb_client.insert_batch_events(self._batch)
-
-            # Commit Kafka offset
+            # Commit Kafka offset after successful Database written
             if last_msg and self.consumer:
                 self.consumer.commit(asynchronous=False)
             
-            logger.info(f"✅ Flushed batch of {len(self._batch)} events to DuckDB and committed Kafka offsets.")
+            logger.info(f"✅ Flushed batch of {len(self._batch)} events to Postgres and committed Kafka offsets.")
             self._batch = []
             self._last_flush = time.time()
 
         except Exception as e:
-            logger.error(f"❌ Failed to flush batch to DuckDB: {e}")
-
+            logger.error(f"❌ Flush failed — batch retained for retry: {e}")
+            # Don't clear batch or commit offset on failure → retry next flush
+            
     def stop(self):
         """Stop consuming gracefully"""
         logger.info("Stopping Kafka consumer...")

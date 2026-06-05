@@ -26,15 +26,14 @@ class MLPredictor:
     def __init__(self):
         self.models_path = Path("/app/models")
         if not self.models_path.exists():
-            # Fallback for local development
-            self.models_path = Path(__file__).parent.parent.parent / "models"
+            self.models_path = Path(__file__).parent.parent.parent / "models"  # Fallback for local development
         logger.info(f"Using models path: {self.models_path}")
         
         self.models = {}
         self.scalers = {}
         self.encoders = {}
         self.location_maps = {}
-        self.features_list = None
+        self.features = None
         self.is_loaded = False
 
     async def load_models(self):
@@ -55,6 +54,7 @@ class MLPredictor:
             
             """Later to add fallback Tensorflow models if needed for deployment redundancy - currently
                 not included to save space and complexity."""
+            
             # Fallback models (Return to TensorFlow models - for deployment redundancy)
             #time_nn_path = self.models_path / "model_time_improved.keras"
             #price_nn_path = self.models_path / "model_price_improved.keras"
@@ -72,16 +72,14 @@ class MLPredictor:
 
             if scaler_ultra_path.exists():
                 self.scalers['ultra'] = pickle.load(open(scaler_ultra_path, 'rb'))
-                logger.info("✅ Loaded ultra scaler for ML models")
             if scaler_minmax_path.exists():
                 self.scalers['minmax'] = pickle.load(open(scaler_minmax_path, 'rb'))
-                logger.info("✅ Loaded minmax scaler for NN models")
 
             # Encoders data
             pickup_encoder_path = self.models_path / "le_pickup.pkl"
             drop_encoder_path = self.models_path / "le_drop.pkl"
 
-            if pickup_encoder_path.exists():
+            if pickup_encoder_path.exists() and drop_encoder_path.exists():
                 self.encoders['pickup'] = pickle.load(open(pickup_encoder_path, 'rb'))
                 self.encoders['drop'] = pickle.load(open(drop_encoder_path, 'rb'))
                 logger.info("✅ Loaded location encoders")
@@ -115,10 +113,11 @@ class MLPredictor:
             hour: int, 
             day_of_week: int, 
             distance_km: float,
-            booking_datetime: None,
+            booking_datetime: Optional[datetime] = None,
             demand_pressure: float = 1.0,
             rating_avg: float = 4.5,
-            use_fallback: bool = False
+            use_fallback: bool = False,
+            ride_id: Optional[str] = None
     ) -> Dict:
         """ 
         Predict ride metrics (CTAT, VTAT, price, completion time).
@@ -134,11 +133,14 @@ class MLPredictor:
             demand_pressure: Demand pressure value (170-777 from database)
             rating_avg: Average driver+customer rating (3.8-5.0)
             use_fallback: Force use of fallback models
-        
+            ride_id: Optional ride ID for tracking
         Returns:
             Dict with predictions including estimated_completed_at"""
         if not self.is_loaded:
             raise RuntimeError("Models not loaded. Call load_models() first.")
+        
+        if booking_datetime is None:
+            booking_datetime = datetime.now()
         
         try:
             # Pre-compute time-based features before extracting model features
@@ -150,13 +152,9 @@ class MLPredictor:
                 pickup, drop, vehicle_type, hour, day_of_week, distance_km
             )
 
-            # Predict CTAT (Customer Time to Arrival)
+            # Predict CTAT (Customer Time to Arrival), VTAT (Vehicle Time to Arrival), and calculate price
             ctat_pred = await self._predict_ctat(features_df, use_fallback)
-
-            # Predict VTAT (Vehicle Time to Arrival)
             vtat_pred = await self._predict_vtat(features_df, use_fallback)
-
-            # Calculate derived metrics
             total_time = ctat_pred + vtat_pred
 
             # Calculate price with database informed logic
@@ -170,10 +168,8 @@ class MLPredictor:
                 rating_avg=rating_avg
             )
 
-            # Predict completion timestamp
+            # Predict completion timestamp, vehicle arrival timestamp, and their respective statuses
             completed_at = await self.predict_completed_at(booking_datetime, ctat_pred)
-
-            # VTAT prediction to ensure the vehicle pickup time is reasonable
             vehicle_arrival_at = await self.predict_vehicle_arrival(booking_datetime, vtat_pred)
             vehicle_arrival_status = await self._calculate_vehicle_arrival_status(vtat_pred)
 
@@ -197,6 +193,7 @@ class MLPredictor:
                 "estimated_vehicle_arrival_at": vehicle_arrival_at.isoformat(),
                 "estimated_vehicle_arrival_minute": round(vtat_pred, 2),
                 "vehicle_arrival_status": vehicle_arrival_status,
+                "customer_arrival_status": customer_arrival_status,
                 "price_per_km": round(estimated_price / distance_km, 2) if distance_km > 0 else 0,
                 "average_speed_kmh": round(distance_km / (total_time / 60), 2) if total_time > 0 else 0,
                 "is_peak_hour": bool(is_peak_hour),
@@ -207,7 +204,7 @@ class MLPredictor:
         
         except Exception as e:
             logger.error(f"❌ Error during prediction: {str(e)}")
-            raise e
+            raise
 
     async def _extract_features(
             self, 
@@ -239,13 +236,8 @@ class MLPredictor:
 
         # Vehicle type encoding
         VEHICLE_TYPE_ENCODING = {
-            'Auto': 0,
-            'Car': 1,
-            'Go Sedan': 2,
-            'Motorcycle': 3,
-            'Premier Sedan': 4,
-            'eBike': 5,
-            'Uber XL': 6,
+           'Auto': 0, 'Car': 1, 'Go Sedan': 2,
+            'Motorcycle': 3, 'Premier Sedan': 4, 'eBike': 5, 'Uber XL': 6
         }
         vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 0)
         logger.info(f"Encoded vehicle type '{vehicle_type}' as {vehicle_encoded}")
@@ -278,14 +270,12 @@ class MLPredictor:
             'day_sin': day_sin,
             'day_cos': day_cos,
         }
-        df = pd.DataFrame([feature_dict])
 
-        # Ensure all expected features exist (fill missing with 0)
+        df = pd.DataFrame([feature_dict])
         for col in self.features:
             if col not in df.columns:
                 df[col] = 0
-            
-        # Return features in exact training order
+    
         return df[self.features]
     
     async def _predict_ctat(self, features_df: pd.DataFrame, use_fallback: bool = False) -> float:
@@ -361,41 +351,18 @@ class MLPredictor:
                 "Uber XL": 1.35 # Large capacity option
             }
             vehicle_mult = vehicle_multiplier.get(vehicle_type, 1.0)
-
-            # Base rate per km (derived from database average price per km)
-            # Information: 2599-13780, normalized to 3000-15000 for calculation
             base_price_per_km = 2800 # IDR/km
-
-            # Calculate base price from distance
             distance_price = distance_km * base_price_per_km * vehicle_mult
-
-            # Time component (from database: total_time affects price)
-            # Derived from: Booking Value / total_time shows ~1000-2000 IDR per minute range
             time_price = time_min * 150
-
-            # Fixed base fare comment
             base_fare = 15000
-            
-            # Demand surge multiplier - Database demand_pressure range: 170-777, normalized to 0.8-1.8 multiplier
             demand_surge = 1.0 * ((demand_pressure - 250) / 500)
             demand_surge = max(0.8, min(demand_surge, 1.8)) # Clamp to 0.8-1.8 range
-
-            # Peak hour surge
             peak_surge = 1.35 if is_peak_hour else 1.0
-
-            # Night hour surge
             night_surge = 1.25 if is_night else 1.0
-
-            # Rating quality factor (high rating = stable, low rating = surge)
-            # Database rating range: 3.8-5.0
             rating_factor = 1.0 - ((5.0 - rating_avg) * 0.08)
             rating_factor = max(0.9, min(rating_factor, 1.5))
-
-            # Composite price calculation
             final_price = (base_fare + distance_price + time_price) * \
                             peak_surge * night_surge * demand_surge * rating_factor
-            
-            # Apply minimum and maximum bounds
             min_fare = 20000 # Minimum fare based on database lowest booking value
             max_fare = 1000000 # Maximum fare based on database highest booking value
 
@@ -417,7 +384,6 @@ class MLPredictor:
         """
         try:
             vtat = float(vtat_minutes)
-        
             if vtat < 5:
                 status = "arriving_soon"
             elif vtat < 15:
@@ -457,13 +423,12 @@ class MLPredictor:
         try:
             # CTAT represents total ride duration
             completed_at = booking_datetime + timedelta(minutes=float(ctat_minutes))
-
             logger.info(f"✅ Predicted completion: {booking_datetime} + {ctat_minutes:.1f} min = {completed_at}")
             return completed_at
         
         except Exception as e:
             logger.error(f"❌ Error predicting completion time: {e}")
-            return booking_datetime + timedelta(minutes=30) # Default fallback completion time
+            return booking_datetime + timedelta(minutes=30)
         
     async def predict_vehicle_arrival(
             self,
@@ -472,9 +437,7 @@ class MLPredictor:
     ) -> datetime:
         """
         Predict vehicle arrival timestamp at pickup location.
-        
         Formula: vehicle_arrival_at = booking_datetime + VTAT
-        
         Args:
             booking_datetime: When ride was booked
             vtat_minutes: Predicted VTAT from model
@@ -492,18 +455,9 @@ class MLPredictor:
 
     async def _get_ride_distance(self, ride_id: str) -> float:
         """
-        Fetch ride distance from  database with Redis cachhing.
-
-        Args:
-            ride_id: The ride ID to fetch distance for
-
-        Returns:
-            float: Ride distance value or 0 if not found
-
-        Formula: predicted_customer_arrival = Ride Distance x (Predicted CTAT / completed_at (Known Time from Database))
+        FIX: Query analytics.trip (distance_km) instead of rides.ride_distance.
+        Matches init_postgres.sql schema exactly.
         """
-        conn = None
-        cur = None
         try:
             # Try Redis cache first (async)
             cached = await redis_get(f"ride_distance:{ride_id}")
@@ -511,83 +465,64 @@ class MLPredictor:
                 logger.debug(f"✅ Ride distance from Redis cache: {ride_id}")
                 return float(cached)
             
-            # Get connection from database.py
-            conn = get_supabase_connection()
-            cur = conn.cursor()
+            # Import to avoid circular imports with database module
+            from app.core.postgres_db import get_postgres_db
+            from sqlalchemy import text
 
-            # Query ride distance
-            query = "SELECT ride_distance FROM rides WHERE id = %s"
-            cur.execute(query, (ride_id))
-            result = cur.fetchone()
+            # Connect table postgresql database
+            async for db in get_postgres_db():
+                result = await db.execute(
+                    text("SELECT distance_km FROM analytics.trip WHERE ride_id = :ride_id"),
+                    {"ride_id": ride_id}
+                )
+                row = result.fetchone()
+                distance = float(row[0]) if row and row[0] is not None else 0.0
 
-            ride_distance = float(result[0]) if result and result[0] is not None else 0.0
-
-            # Cache for 1 hour (async)
-            if ride_distance > 0:
-                await redis_set(f"ride_distance:{ride_id}", str(ride_distance), expire=3600)
+                if distance > 0:
+                    await redis_set(f"ride_distance:{ride_id}", str(distance), expire=3600)  # Cache for 1 hour
+                
+                logger.debug(f"✅ Ride distance from database: {ride_id} = {distance} km")
+                return distance
             
-            logger.debug(f"✅ Fetched ride distance for {ride_id}: {ride_distance} km")
-            return ride_distance
-        
         except Exception as e:
             logger.error(f"❌ Error fetching ride distance for {ride_id}: {e}")
             return 0.0
-        
-        finally:
-            try:
-                if cur:
-                    cur.close()
-                if conn and not conn.closed:
-                    conn.close()
-            except Exception as e:
-                logger.debug(f"Error closing database connection: {e}")
 
-    async def _calculate_customer_arrival_status(self, ctat_minutes: float, ride_id: str) -> str:
+    async def _calculate_customer_arrival_status(self, 
+                                                 ctat_minutes: float, 
+                                                 ride_id: str,
+                                                 distance_km: Optional[float] = None
+                                                 ) -> str:
         """
-        Calculate customer arrival status based on CTAT prediction and ride distance.
-        
-        Formula:
-            - Fetch ride_distance from database with Redis caching
-            - Compare predicted_ctat with expected arrival time based on distance
-
-        Args:
-        ctat_minutes: Predicted CTAT (Customer Time to Arrival) in minutes
-        ride_id: Ride ID to fetch distance from database
-        
-        Returns:
-            str: Customer arrival status
-            - "arriving_soon": CTAT < 5 min (customer nearly at dropoff)
-            - "on_the_way": 5-15 min (customer on the way)
-            - "near_dropoff": 15-30 min (normal dropoff time)
-            - "late_arrival": >= 30 min (longer than expected)
-            - "unknown": Error or invalid data
-            """
+        FIX: ride_id is optional. If provided, fetch distance from analytics.trip (SQL database).
+        If not, use distance_km directly (for new ride predictions).
+        """
         try:
             # Validate and convert CTAT to float
             ctat = float(ctat_minutes)
 
             # Fetch ride distance from database (with Redis caching)
-            ride_distance = await self._get_ride_distance(ride_id)
+            if ride_id:
+                resolved_distance = await self._get_ride_distance(ride_id)
+            elif distance_km is not None:
+                resolved_distance = float(distance_km)
+            else:
+                resolved_distance = 0.0
 
             # If no valid distance, return unknown status
-            if ride_distance <= 0:
-                logger.warning(f"⚠️ Invalid ride distance for {ride_id}: {ride_distance} km, cannot calculate customer arrival status.")
+            if resolved_distance <= 0:
+                logger.warning("⚠️ No valid distance — returning 'unknown' status.")
                 return "unknown"
             
-            # Calculate status based on CTAT thresholds
-            logger.debug(f"Calculating status - CTAT: {ctat} min, Ride Distance: {ride_distance} km")
-
+            # Status based on CTAT prediction thresholds
             if ctat < 5: 
-                status = "arriving_soon"
+                return "arriving_soon"
             elif ctat < 15:
-                status = "on_the_way"
+                return "on_the_way"
             elif ctat < 30:
-                status = "near_dropoff"
+                return "near_dropoff"
             else:
-                status = "late_arrival"
-
-            logger.debug(f"✅ Status calculated: {status} for ride {ride_id}")
-            return status
+                return "late_arrival"
         
         except ValueError as e:
             logger.error(f"❌ Invalid CTAT value: {ctat_minutes} - {e}")

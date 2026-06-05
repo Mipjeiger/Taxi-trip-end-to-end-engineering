@@ -159,7 +159,7 @@ services:
     image: metabase/metabase:latest
     container_name: metabase
     ports:
-      - "4001:4001"   
+      - "4001:3000"   
     volumes:
       - metabase_data:/metabase-data
     environment:
@@ -169,7 +169,6 @@ services:
       MB_DB_PASS: ${POSTGRES_PASSWORD}
       MB_DB_HOST: postgres
       MB_DB_PORT: 5432
-      MB_PORT: 4001
     depends_on:
       postgres:
         condition: service_healthy
@@ -177,7 +176,7 @@ services:
       - taxi_trip_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4001/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 5

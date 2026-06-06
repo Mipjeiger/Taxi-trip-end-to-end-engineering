@@ -75,11 +75,11 @@ def get_postgres_conn():
     import psycopg2
     try:
         return psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST"),
-            port=os.getenv("POSTGRES_PORT"),
-            user=os.getenv("POSTGRES_USER"),
-            password=os.getenv("POSTGRES_PASSWORD"),
-            dbname=os.getenv("POSTGRES_DB"),
+            host=os.getenv("POSTGRES_HOST_AIRFLOW"),
+            port=os.getenv("POSTGRES_PORT_AIRFLOW"),
+            user=os.getenv("POSTGRES_USER_AIRFLOW"),
+            password=os.getenv("POSTGRES_PASSWORD_AIRFLOW"),
+            dbname=os.getenv("POSTGRES_DB_AIRFLOW"),
         )
     except Exception as e:
         logger.error(f"❌ Failed to connect to PostgreSQL: {e}")
@@ -164,8 +164,6 @@ def transform_data(**context):
             "drop_location": "dropoff_location",
             "vehicle_type": "ride_type",
             "booking_status": "status",
-            "booking_value": "actual_fare",
-            "booking_value": "estimated_fare",
             "ride_distance": "distance_km",
             "driver_ratings": "driver_rating",
             "estimated_drop_time_minute": "duration_minutes",
@@ -177,9 +175,9 @@ def transform_data(**context):
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
         logger.info(f"Columns after renaming:\n{df.columns.tolist()}")
 
-        if "booking_value" in df.columns:
-            df["actual_fare"] = df["booking_value"]
-            df["estimated_fare"] = df["booking_value"]
+        if "booking_value" in df.columns or "Booking Value" in df.columns:
+            df["actual_fare"] = df.get("booking_value") or df.get("Booking Value")
+            df["estimated_fare"] = df.get("booking_value") or df.get("Booking Value")
 
         # ========================================================
         # Validate required columns
@@ -296,6 +294,9 @@ def load_to_postgres(**context):
         for ts_col in ["created_at", "completed_at"]:
             if ts_col in df_insert.columns:
                 df_insert[ts_col] = pd.to_datetime(df_insert[ts_col], errors="coerce")
+
+        logger.info(f"Database transformed: {df_insert.head()}")
+        logger.info(f"Database types: {df_insert.dtypes}")
 
         # Upsert into PostgreSQL
         import psycopg2.extras

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS analytics.trip (
     actual_fare      DOUBLE PRECISION,
     distance_km      DOUBLE PRECISION,
     duration_minutes DOUBLE PRECISION,
+    driver_rating    DOUBLE PRECISION,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at     TIMESTAMP
 );

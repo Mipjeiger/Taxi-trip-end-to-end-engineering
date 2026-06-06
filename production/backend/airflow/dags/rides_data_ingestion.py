@@ -175,9 +175,16 @@ def transform_data(**context):
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
         logger.info(f"Columns after renaming:\n{df.columns.tolist()}")
 
+        # Resolve driver_id missing in columns
+        driver
+        if "driver_id" not in df.columns:
+            for candidate in driver_id_candidates:
+                if candidate in df.columns:
+                    df
+
         if "booking_value" in df.columns or "Booking Value" in df.columns:
-            df["actual_fare"] = df.get("booking_value") or df.get("Booking Value")
-            df["estimated_fare"] = df.get("booking_value") or df.get("Booking Value")
+            df["actual_fare"] = df["booking_value"] if "booking_value" in df.columns else df["Booking Value"]
+            df["estimated_fare"] = df["booking_value"] if "booking_value" in df.columns else df["Booking Value"]
 
         # ========================================================
         # Validate required columns
@@ -421,13 +428,40 @@ def data_quality_checks(**context):
                 # Null checks
                 cur.execute("""
                     SELECT
-                        SUM(CASE WHEN ride_id IS NULL THEN 1 ELSE 0 END),
-                        SUM(CASE WHEN rider_id IS NULL THEN 1 ELSE 0 END),
-                        SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END)
+                        SUM(CASE WHEN ride_id IS NULL THEN 1 ELSE 0 END) AS null_ride_id,
+                        SUM(CASE WHEN rider_id IS NULL THEN 1 ELSE 0 END) AS null_rider_id,
+                        SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver_id
                     FROM analytics.trip;
                 """)
                 null_check = cur.fetchone()
                 logger.info(f"✅ Nulls — ride_id: {null_check[0]}, rider_id: {null_check[1]}, driver_id: {null_check[2]}")
+
+                # --- Driver ID null breakdown by status --
+                cur.execute("""
+                    SELECT
+                        status,
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver_count,
+                        ROUND(100.0 * SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS null_driver_pct
+                    FROM analytics.trip
+                    GROUP BY status
+                    ORDER BY total DESC;
+                """)
+                driver_null_by_status = cur.fetchall()
+                logger.info("📊 Driver ID null breakdown by status:")
+                for row in driver_null_by_status:
+                    logger.info(f"   Status: {row[0]}, Total: {row[1]}, Null Driver ID: {row[2]}, Null Driver %: {row[3]}%")
+
+                # Only flag as problem if COMPLETED rides have null driver_id
+                cur.execute("""
+                    SELECT COUNT(*) FROM analytics.trip
+                    WHERE status = 'Completed' AND driver_id IS NULL;
+                """)
+                completed_missing_driver = cur.fetchone()[0]
+                if completed_missing_driver > 0:
+                    logger.warning(f"⚠️ Found {completed_missing_driver} completed rides with missing driver_id")
+                else:
+                    logger.info("✅ No completed rides with missing driver_id found")
 
                 # Invalid fares
                 cur.execute("""

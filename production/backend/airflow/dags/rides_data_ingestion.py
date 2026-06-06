@@ -157,28 +157,37 @@ def transform_data(**context):
             .str.replace(" ", "_")
             )
 
-        # Rename supabase columns -> Duckdb trip schema
+        # Rename Postgres DB to column mapping (on schema postgresql)
         rename_map = {
-            "user_id": "rider_id",
-            "drop_location": "dropoff_location",
             "booking_id": "ride_id",
+            "customer_id": "rider_id",
+            "drop_location": "dropoff_location",
+            "vehicle_type": "ride_type",
+            "booking_status": "status",
+            "booking_value": "actual_fare",
+            "booking_value": "estimated_fare",
+            "ride_distance": "distance_km",
+            "driver_ratings": "driver_rating",
+            "estimated_drop_time_minute": "duration_minutes",
             "pickup_lon": "pickup_lng",
             "drop_lat": "dropoff_lat",
             "drop_lon": "dropoff_lng",
-            "price": "actual_fare",
-            "vehicle_type": "ride_type",
-            "ride_distance": "distance_km",
-            "estimated_drop_time_minute": "duration_minutes",
+            "price": "actual_fare"
         }
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+        logger.info(f"Columns after renaming:\n{df.columns.tolist()}")
+
+        if "booking_value" in df.columns:
+            df["actual_fare"] = df["booking_value"]
+            df["estimated_fare"] = df["booking_value"]
 
         # ========================================================
         # Validate required columns
         # ========================================================
         required_columns = ["ride_id","rider_id"]
-        for col in required_columns:
-            if col not in df.columns:
-                raise ValueError(f"Required column missing: {col}")
+        missing = [c for c in required_columns if c not in df.columns]
+        if missing:
+            raise ValueError(f"Required columns missing: {missing}")
 
         # ========================================================
         # Data Cleaning
@@ -199,6 +208,10 @@ def transform_data(**context):
         # Fill status from booking_status if needed
         if "booking_status" in df.columns and "status" not in df.columns:
             df["status"] = df["booking_status"]
+
+        if "price" in df.columns:
+            df["actual_fare"] = df["price"]
+            df["estimated_fare"] = df["price"]
 
         # Add ingestion timestamp
         df["ingestion_timestamp"] = (datetime.now().isoformat())
@@ -244,14 +257,30 @@ def load_to_postgres(**context):
             raise ValueError("No transformed parquet path found")
 
         df = pd.read_parquet(transformed_path)
+        logger.info(f"✅ Loaded data: {df.head()}")
+        logger.info(f"✅ Data columns:\n{df.columns.tolist()}")
         logger.info(f"✅ Loaded transformed dataframe with {len(df)} rows")
 
         # Map Dataframe columns to database schema (analytics.trip)
         trip_cols = [
-            "ride_id", "rider_id", "driver_id", "pickup_location",
-            "dropoff_location", "pickup_lat", "pickup_lng", "dropoff_lat",
-            "dropoff_lng", "status", "ride_type", "actual_fare",
-            "distance_km", "duration_minutes", "created_at", "completed_at"
+            "ride_id",
+            "rider_id",
+            "driver_id",
+            "pickup_location",
+            "dropoff_location",
+            "pickup_lat",
+            "pickup_lng",
+            "dropoff_lat",
+            "dropoff_lng",
+            "status",
+            "ride_type",
+            "estimated_fare",
+            "actual_fare",
+            "distance_km",
+            "duration_minutes",
+            "created_at",
+            "completed_at",
+            "driver_rating",
         ]
 
         # Keep only columns that exist in df and trip schema
@@ -260,7 +289,7 @@ def load_to_postgres(**context):
 
         # Cast types safely
         for float_col in ["pickup_lat", "pickup_lng", "dropoff_lat", "dropoff_lng",
-                          "actual_fare", "distance_km", "duration_minutes"]:
+                          "actual_fare", "estimated_fare", "distance_km", "duration_minutes", "driver_rating"]:
             if float_col in df_insert.columns:
                 df_insert[float_col] = pd.to_numeric(df_insert[float_col], errors="coerce")
 
@@ -287,11 +316,14 @@ def load_to_postgres(**context):
                         f"{c} = EXCLUDED.{c}" for c in cols if c != "ride_id"
                     ])
 
-                    cur.execute(f"""
+                    # Read: sql table analytics.trip - inserting to columns
+                    sql = f"""
                         INSERT INTO analytics.trip ({col_names})
                         VALUES ({placeholders})
-                        ON CONFLICT (ride_id) DO UPDATE SET {update_clause}
-                    """, vals)
+                        ON CONFLICT (ride_id) 
+                        DO UPDATE SET {update_clause}"""
+
+                    cur.execute(sql, vals)
                     inserted += 1 # Count all processed rows as inserted for simplicity
 
             conn.commit()

@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS analytics.taxi_trip_data_events (
 -- ================================================================
 -- Table 2: Rides analytics copy
 -- ================================================================
+
+-- -- Extend analytics shema
+ALTER TABLE analytics.trip ADD COLUMN driver_rating DOUBLE PRECISION; -- included driver_rating column
 CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id          VARCHAR PRIMARY KEY,
     rider_id         VARCHAR NOT NULL,
@@ -38,6 +41,7 @@ CREATE TABLE IF NOT EXISTS analytics.trip (
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at     TIMESTAMP
 );
+SELECT * FROM analytics.trip;
 
 -- ================================================================
 -- Table 3: Driver profiles

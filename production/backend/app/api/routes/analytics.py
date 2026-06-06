@@ -30,9 +30,9 @@ async def anyltics_health(db: AsyncSession = Depends(get_postgres_db)):
 
 @router.post("/query")
 async def run_query(req: QueryRequest, db: AsyncSession = Depends(get_postgres_db)):
-    """Run a custom SQL query against DuckDB and return results"""
+    """Run a custom SQL query against Postgresql and return results"""
     try:
-        query = req.sql if "analytics" in req.sql else req.sql.replace("FROM", "FROM analytics.")
+        query = req.sql
         result = await db.execute(text(query))
         rows = result.fetchall()
 
@@ -45,7 +45,7 @@ async def run_query(req: QueryRequest, db: AsyncSession = Depends(get_postgres_d
     
 @router.get("/tables")
 async def list_tables(db: AsyncSession = Depends(get_postgres_db)):
-    """List all tables in DuckDB"""
+    """List all tables in PostgreSQL"""
     try:
         query = text("""
             SELECT table_name
@@ -62,7 +62,7 @@ async def list_tables(db: AsyncSession = Depends(get_postgres_db)):
 
 @router.get("/summary")
 async def summary(db: AsyncSession = Depends(get_postgres_db)):
-    """Get a summary of the DuckDB database"""
+    """Get a summary of the PostgreSQL database"""
     try:
         # Get all tables in analytics schema
         tables_query = text("""
@@ -94,7 +94,8 @@ async def ride_statistics(db: AsyncSession = Depends(get_postgres_db)):
                 COUNT(*) AS total_rides,
                 AVG(actual_fare) AS avg_fare,
                 AVG(distance_km) AS avg_distance,
-                AVG(duration_minutes) AS avg_duration
+                AVG(duration_minutes) AS avg_duration,
+                AVG(driver_rating) AS avg_driver_rating
             FROM analytics.trip
         """)
         result = await db.execute(query)
@@ -116,13 +117,14 @@ async def top_drivers(limit: int = 10 ,db: AsyncSession = Depends(get_postgres_d
     try:
         query = text("""
             SELECT
-                    driver_id,
-                    AVG(rating) AS avg_rating,
-                    COUNT(*) AS total_rides
-            FROM anayltics.drivers d
-            LEFT JOIN analytics.trip t ON d.driver_id = t.driver_id
-            GROUP BY driver_id
-            ORDER BY avg_rating DESC
+                    d.driver_id,
+                    d.rating,
+                    COUNT(t.ride_id) AS total_rides
+            FROM analytics.drivers d
+            LEFT JOIN analytics.trip t 
+                ON d.driver_id = t.driver_id
+            GROUP BY d.driver_id, d.rating
+            ORDER BY d.rating DESC
             LIMIT :limit
         """)
         result = await db.execute(query, {"limit": limit})

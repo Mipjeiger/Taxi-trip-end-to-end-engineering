@@ -222,13 +222,13 @@ class MLPredictor:
             pickup_encoded = self.encoders['pickup'].transform([pickup])[0]
         except Exception as e:
             logger.warning(f"⚠️ Pickup encoding failed for '{pickup}': {e}, using fallback encoding.")
-            pickup_encoded = hash(pickup) % 1000
+            pickup_encoded = -1
 
         try:
             drop_encoded = self.encoders['drop'].transform([drop])[0]
         except Exception as e:
             logger.warning(f"⚠️ Drop encoding failed for '{drop}': {e}, using fallback encoding.")
-            drop_encoded = hash(drop) % 1000
+            drop_encoded = -1
 
         # Route clustering logic
         route_key = f"{pickup_encoded}_{drop_encoded}"
@@ -490,7 +490,7 @@ class MLPredictor:
 
     async def _calculate_customer_arrival_status(self, 
                                                  ctat_minutes: float, 
-                                                 ride_id: str,
+                                                 ride_id: Optional[str] = None,
                                                  distance_km: Optional[float] = None
                                                  ) -> str:
         """

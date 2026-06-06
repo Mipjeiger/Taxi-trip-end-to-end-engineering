@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS analytics.trip (
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at     TIMESTAMP
 );
+
+-- Backfill from status column if already loaded
+UPDATE analytics.trip
+SET booking_status = status
+WHERE booking_status IS NULL AND status IS NOT NULL;
+
 SELECT * FROM analytics.trip;
 
 -- ================================================================

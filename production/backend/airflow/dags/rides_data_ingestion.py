@@ -69,6 +69,34 @@ PARQUET_PATH = os.getenv("PARQUET_PATH", "/opt/airflow/database/taxi_trip_engine
 TEMP_DIR = "/tmp/airflow_taxi_pipeline"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Row limit - to adjust fir many rows needed to be ingested for data in sql table
+ROW_LIMIT = int(os.getenv("INGESTION_ROW_LIMIT", 15000))
+
+# Parquet Source -> PostgreSQL table (analytics.trip) column mapping candidates
+COLUMN_RENAME_MAP = {
+    "booking_id": "ride_id",
+    "customer_id": "rider_id",
+    "drop_location": "dropoff_location",
+    "vehicle_type": "ride_type",
+    "booking_status": "booking_status",
+    "ride_distance": "distance_km",
+    "driver_ratings": "driver_rating",
+    "estimated_drop_time_minute": "duration_minutes",
+    "pickup_lon": "pickup_lng",
+    "drop_lat": "dropoff_lat",
+    "drop_lon": "dropoff_lng",
+    "booking_value": "actual_fare",
+}
+
+# Statuses where NULL driver_id is expected (e.g. Cancelled, No-show)
+NO_DRIVER_STATUES = [
+    "Cancelled by Rider",
+    "Cancelled by Driver",
+    "No Driver Found",
+    "Incomplete",
+    "Completed"
+]
+
 # Internal Docker PostgreSQL connection for Airflow tasks
 def get_postgres_conn():
     """Get psycopg2 connection to internal PostgreSQL for Airflow tasks"""
@@ -88,7 +116,6 @@ def get_postgres_conn():
 # ================================================================
 # Task 1: Extract Data
 # ================================================================
-
 def extract_parquet_data(**context):
     """Extract taxi ride parquet data"""
 
@@ -97,11 +124,26 @@ def extract_parquet_data(**context):
             raise FileNotFoundError(f"❌ Parquet file not found at {PARQUET_PATH}")
 
         df = pd.read_parquet(PARQUET_PATH)
+        total_available = len(df)
         logger.info(f"✅ Extracted {len(df)} records | columns: {list(df.columns)}")
 
         # Normalize timestamps
         for col in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = pd.to_datetime(df[col]).dt.floor("us")
+
+        # Apply row limit
+        if len(df) > ROW_LIMIT:
+            df = df.head(ROW_LIMIT)
+            logger.info(f"⚠️ Row limit applied: ingesting {len(df)} of {total_available} available records")
+        else:
+            logger.info(f"✅ Extracting all {total_available} records (below row limit of {ROW_LIMIT})")
+
+        logger.info(f"📊 Extracted columns: {df.columns.tolist()}")
+
+        # Normalized timestamps
+        for col in df.columns:
+            if pd.api.is_datetime64_any_dtype(df[col]):
                 df[col] = pd.to_datetime(df[col]).dt.floor("us")
 
         extracted_path = os.path.join(
@@ -114,20 +156,19 @@ def extract_parquet_data(**context):
                       allow_truncated_timestamps=True,)
 
         # Push filepath only
-        context["task_instance"].xcom_push(
-            key="extracted_path",
-            value=extracted_path,
-        )
+        context["task_instance"].xcom_push(key="extracted_path", value=extracted_path)
+        context["task_instance"].xcom_push(key="total_available", value=total_available)
 
         return {
             "rows_extracted": len(df),
+            "total_available": total_available,
+            "total_available": ROW_LIMIT,
             "file_path": extracted_path,
-            "timestamp": datetime.now().isoformat(),
         }
 
     except Exception as e:
         logger.exception("❌ Failed extracting parquet data")
-        raise e
+        raise
 
 
 # ================================================================
@@ -156,35 +197,90 @@ def transform_data(**context):
             .str.strip()
             .str.replace(" ", "_")
             )
+        logger.info(f"📊 Normalized column names: {df.columns.tolist()}")
 
-        # Rename Postgres DB to column mapping (on schema postgresql)
-        rename_map = {
-            "booking_id": "ride_id",
-            "customer_id": "rider_id",
-            "drop_location": "dropoff_location",
-            "vehicle_type": "ride_type",
-            "booking_status": "status",
-            "ride_distance": "distance_km",
-            "driver_ratings": "driver_rating",
-            "estimated_drop_time_minute": "duration_minutes",
+        # ========================================================
+        # Rename to match sql table schema
+        # ========================================================
+        df = df.rename(columns={
+            k: v for k, v in COLUMN_RENAME_MAP.items() if k in df.columns
+        })
+
+        # ========================================================
+        # EDA Features
+        # ========================================================
+
+        # Handle ride_id column standardization -> parquet uses "booking_id" -> "ride_id" in sql
+        if "ride_id" not in df.columns:
+            # try alternate names
+            for alt in ["id", "trip_id"]:
+                if alt in df.columns:
+                    df["ride_id"] = df[alt]
+                    logger.info(f"✅ Created ride_id column from {alt}")
+                    break
+            else:
+                raise ValueError("No ride_id column found or created")
+            
+        # Handle rider_id column standardization -> parquet uses "customer_id" -> "rider_id" in sql
+        if "rider_id" not in df.columns:
+            for alt in ["user_id", "passenger_id"]:
+                if alt in df.columns:
+                    df["rider_id"] = df[alt]
+                    logger.info(f"✅ Created rider_id column from {alt}")
+                    break
+            else:
+                raise ValueError("No rider_id column found or created")
+            
+        # Handle driver_id from driver_statsu
+        if "driver_id" not in df.columns:
+            if "driver_status" in df.columns:
+                df["driver_id"] = df["driver_status"].apply(
+                    lambda s: f"DRV-{hash(str(s)) % 900000 + 100000}"
+                    if str(s).strip().lower() == "online" else None
+                )
+                logger.info("✅ Created driver_id column from driver_status")
+            else:
+                df["driver_id"] = None
+                logger.info("⚠️ No driver_id or driver_status column found, setting driver_id to None")
+
+        # Force NULL driver_id for statuses where no driver is expected
+        if "booking_status" in df.columns:
+            no_driver_mask = df["booking_status"].isin(NO_DRIVER_STATUES)
+            df.loc[no_driver_mask, "driver_id"] = None
+            logger.info(f"✅ Set driver_id to NULL for {no_driver_mask.sum()} records with statuses: {NO_DRIVER_STATUES}")
+
+        # booking_status - keep as-is from source -- "booking_status" column maps directly to sql table (analytics.trip.booking_status)
+        if "booking_status" in df.columns:
+            df["status"] = df["booking_status"]
+            logger.info("✅ Mapped booking_status to status column for SQL schema compatibility")
+        elif "status" in df.columns:
+            df["booking_status"] = df["status"]
+        else:
+            df["status"] = "Unknown"
+            df["booking_status"] = "Unknown"
+            logger.info("⚠️ No status column found, setting status and booking_status to 'Unknown'")
+
+        # Handle actual_fare / estimated_fare -- booking_value -> actual_fare in sql
+        if "actual_fare" not in df.columns and "price" in df.columns:
+            df["actual_fare"] = pd.to_numeric(df["price"], errors="coerce")
+        if "estimated_fare" not in df.columns and "actual_fare" in df.columns:
+            df["estimated_fare"] = df["actual_fare"]
+
+        # Coordinate columns - parquet: pickup_lat, pickup_lon, drop_lat, drop_lon
+        coord_map = {
             "pickup_lon": "pickup_lng",
             "drop_lat": "dropoff_lat",
             "drop_lon": "dropoff_lng",
-            "price": "actual_fare"
         }
-        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-        logger.info(f"Columns after renaming:\n{df.columns.tolist()}")
+        for src, dst in coord_map.items():
+            if src in df.columns and dst not in df.columns:
+                df[dst] = df[src]
 
-        # Resolve driver_id missing in columns
-        driver
-        if "driver_id" not in df.columns:
-            for candidate in driver_id_candidates:
-                if candidate in df.columns:
-                    df
-
-        if "booking_value" in df.columns or "Booking Value" in df.columns:
-            df["actual_fare"] = df["booking_value"] if "booking_value" in df.columns else df["Booking Value"]
-            df["estimated_fare"] = df["booking_value"] if "booking_value" in df.columns else df["Booking Value"]
+        # Validate required columns
+        required = ["ride_id", "rider_id"]
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            raise ValueError(f"Required columns missing after transformation: {missing}")
 
         # ========================================================
         # Validate required columns
@@ -193,52 +289,39 @@ def transform_data(**context):
         missing = [c for c in required_columns if c not in df.columns]
         if missing:
             raise ValueError(f"Required columns missing: {missing}")
-
+        
         # ========================================================
-        # Data Cleaning
+        # Data cleaning
         # ========================================================
-        df = df.drop_duplicates(subset=["ride_id"], keep="first",)
+        before = len(df)
+        df = df.drop_duplicates(subset=["ride_id"], keep="first")
         df = df.dropna(subset=["ride_id", "rider_id"])
+        logger.info(f"✅ Cleaned data: dropped {before - len(df)} records with duplicate or null ride_id/rider_id")
 
         # ========================================================
-        # Feature Engineering
+        # Feature engineering
         # ========================================================
+        if "distance_km" in df.columns and "duration_minutes" in df.columns:
+            df["avg_speed_kmh"] = (df["distance_km"] / ((df["duration_minutes"] / 60) + 1e-6)).round(2)
 
-        if ("distance_km" in df.columns and "duration_minutes" in df.columns):
-            df["avg_speed"] = (df["distance_km"] / ((df["duration_minutes"] / 60) + 1e-6))
+        if "actual_fare" in df.columns and "distance_km" in df.columns:
+            df["fare_per_km"] = (df["actual_fare"] / (df["distance_km"] + 1e-6)).round(2)
 
-        if ("actual_fare" in df.columns and "distance_km" in df.columns):
-            df["fare_per_km"] = (df["actual_fare"] / (df["distance_km"] + 1e-6))
+        df["ingestion_timestamp"] = datetime.now().isoformat()
 
-        # Fill status from booking_status if needed
-        if "booking_status" in df.columns and "status" not in df.columns:
-            df["status"] = df["booking_status"]
+        # Log null summary before saving
+        key_cols = ["ride_id", "rider_id", "driver_id", "booking_status",
+                    "status", "actual_fare", "distance_km"]
+        null_summary = {c: int(df[c].isna().sum()) for c in key_cols if c in df.columns}
+        logger.info(f"Null summary before saving:\n{null_summary}")
 
-        if "price" in df.columns:
-            df["actual_fare"] = df["price"]
-            df["estimated_fare"] = df["price"]
-
-        # Add ingestion timestamp
-        df["ingestion_timestamp"] = (datetime.now().isoformat())
-        logger.info("✅ Data transformation completed")
-
-        transformed_path = os.path.join(
-            TEMP_DIR,
-            f"transformed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet",
-        )
+        transformed_path = os.path.join(TEMP_DIR, f"transformed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet")
         df.to_parquet(transformed_path, index=False)
 
-        context["task_instance"].xcom_push(
-            key="transformed_path",
-            value=transformed_path,
-        )
-        logger.info(f"✅ Transformed {len(df)} rows | saved to {transformed_path}")
-
-        return {
-            "rows_transformed": len(df),
-            "file_path": transformed_path,
-            "timestamp": datetime.now().isoformat(),
-        }
+        # Push transformed file path to XCom for downstream tasks
+        context["task_instance"].xcom_push(key="transformed_path", value=transformed_path)
+        logger.info(f"✅ Transformed data saved to {transformed_path} with {len(df)} records")
+        return {"rows_transformed": len(df), "file_path": transformed_path}
 
     except Exception as e:
         logger.exception("❌ Failed transforming data")
@@ -248,25 +331,21 @@ def transform_data(**context):
 # ================================================================
 # Task 3: Load Into PostgreSQL (table: analytics.trip)
 # ================================================================
-
 def load_to_postgres(**context):
     """Load transformed data into PostgreSQL"""
 
     try:
         transformed_path = context["task_instance"].xcom_pull(
-            task_ids="transform_data",
-            key="transformed_path",
+            task_ids="transform_data", key="transformed_path",
         )
 
         if not transformed_path:
             raise ValueError("No transformed parquet path found")
 
         df = pd.read_parquet(transformed_path)
-        logger.info(f"✅ Loaded data: {df.head()}")
-        logger.info(f"✅ Data columns:\n{df.columns.tolist()}")
-        logger.info(f"✅ Loaded transformed dataframe with {len(df)} rows")
+        logger.info(f"✅ Loading {len(df)} rows into sql table (analytics.trip)")
 
-        # Map Dataframe columns to database schema (analytics.trip)
+        # Columns matching the analytics.trip schema - we will only insert these columns and ignore any extras
         trip_cols = [
             "ride_id",
             "rider_id",
@@ -278,29 +357,39 @@ def load_to_postgres(**context):
             "dropoff_lat",
             "dropoff_lng",
             "status",
+            "booking_status",
             "ride_type",
             "estimated_fare",
             "actual_fare",
             "distance_km",
             "duration_minutes",
+            "driver_rating",
             "created_at",
             "completed_at",
-            "driver_rating",
         ]
 
         # Keep only columns that exist in df and trip schema
         insert_cols = [c for c in trip_cols if c in df.columns]
         df_insert = df[insert_cols].copy()
+        logger.info(f"📊 Columns to insert: {insert_cols}")
+
+        float_cols = [
+            "pickup_lat", "pickup_lng", "dropoff_lat", "dropoff_lng",
+            "actual_fare", "estimated_fare", "distance_km",
+            "duration_minutes", "driver_rating"
+        ]
 
         # Cast types safely
-        for float_col in ["pickup_lat", "pickup_lng", "dropoff_lat", "dropoff_lng",
-                          "actual_fare", "estimated_fare", "distance_km", "duration_minutes", "driver_rating"]:
+        for float_col in float_cols:
             if float_col in df_insert.columns:
                 df_insert[float_col] = pd.to_numeric(df_insert[float_col], errors="coerce")
 
         for ts_col in ["created_at", "completed_at"]:
             if ts_col in df_insert.columns:
                 df_insert[ts_col] = pd.to_datetime(df_insert[ts_col], errors="coerce")
+
+        # Replace NaN with None for proper NULL insertion in PostgreSQL
+        df_insert = df_insert.where(pd.notna(df_insert), None)
 
         logger.info(f"Database transformed: {df_insert.head()}")
         logger.info(f"Database types: {df_insert.dtypes}")
@@ -310,12 +399,19 @@ def load_to_postgres(**context):
 
         conn = get_postgres_conn()
         inserted = 0
+        skipped = 0
 
         try:
             with conn.cursor() as cur:
                 for _, row in df_insert.iterrows():
-                    cols = [c for c in insert_cols if pd.notna(row.get(c))]
+                    # Only include non-None values in INSERT
+                    cols = [c for c in insert_cols if row.get(c) is not None]
                     vals = [row[c] for c in cols]
+
+                    if not cols:
+                        skipped += 1
+                        continue
+
                     placeholders = ", ".join(["%s"] * len(cols))
                     col_names = ", ".join(cols)
                     
@@ -336,13 +432,13 @@ def load_to_postgres(**context):
 
             conn.commit()
             logger.info(f"✅ Loaded {inserted} records into PostgreSQL")
+            logger.info(f"⚠️ Skipped {skipped} records with missing values")
 
         finally:
             conn.close()
 
         context["task_instance"].xcom_push(
-            key="rows_loaded",
-            value=inserted,
+            key="rows_loaded",value=inserted,
         )
 
         return {
@@ -351,7 +447,7 @@ def load_to_postgres(**context):
 
     except Exception as e:
         logger.exception("❌ Failed loading data into PostgreSQL")
-        raise e
+        raise
 
 # ================================================================
 # Task 4: Publish Kafka Event
@@ -386,7 +482,8 @@ def publish_kafka_event(**context):
             "pipeline": "rides_data_ingestion",
             "event_timestamp": datetime.now().isoformat(),
             "event_data": {
-                "rows_loaded": load_result.get("rows_loaded") if load_result else 0,
+                "rows_loaded": load_result.get("rows_loaded", 0) if load_result else 0,
+                "row_limit": ROW_LIMIT,
                 "table": "analytics.trip",
                 "database": "PostgreSQL (docker initiated)",
             },
@@ -410,7 +507,6 @@ def publish_kafka_event(**context):
 # ================================================================
 # Task 5: Data Quality Checks
 # ================================================================
-
 def data_quality_checks(**context):
     """Run data quality validation againts the PostgreSQL database"""
 
@@ -428,13 +524,14 @@ def data_quality_checks(**context):
                 # Null checks
                 cur.execute("""
                     SELECT
-                        SUM(CASE WHEN ride_id IS NULL THEN 1 ELSE 0 END) AS null_ride_id,
-                        SUM(CASE WHEN rider_id IS NULL THEN 1 ELSE 0 END) AS null_rider_id,
-                        SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver_id
+                        SUM(CASE WHEN ride_id IS NULL THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN rider_id IS NULL THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN booking_status IS NULL THEN 1 ELSE 0 END),
                     FROM analytics.trip;
                 """)
                 null_check = cur.fetchone()
-                logger.info(f"✅ Nulls — ride_id: {null_check[0]}, rider_id: {null_check[1]}, driver_id: {null_check[2]}")
+                logger.info(f"✅ Nulls — ride_id: {null_check[0]}, rider_id: {null_check[1]}, driver_id: {null_check[2]}, booking_status: {null_check[3]}")
 
                 # --- Driver ID null breakdown by status --
                 cur.execute("""
@@ -442,20 +539,21 @@ def data_quality_checks(**context):
                         status,
                         COUNT(*) AS total,
                         SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver_count,
-                        ROUND(100.0 * SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS null_driver_pct
+                        ROUND(100.0 * SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS null_pct
                     FROM analytics.trip
                     GROUP BY status
                     ORDER BY total DESC;
                 """)
-                driver_null_by_status = cur.fetchall()
+                driver_by_status = cur.fetchall()
                 logger.info("📊 Driver ID null breakdown by status:")
-                for row in driver_null_by_status:
+                for row in driver_by_status:
                     logger.info(f"   Status: {row[0]}, Total: {row[1]}, Null Driver ID: {row[2]}, Null Driver %: {row[3]}%")
 
                 # Only flag as problem if COMPLETED rides have null driver_id
                 cur.execute("""
                     SELECT COUNT(*) FROM analytics.trip
-                    WHERE status = 'Completed' AND driver_id IS NULL;
+                    WHERE status = 'Completed' 
+                    AND driver_id IS NULL;
                 """)
                 completed_missing_driver = cur.fetchone()[0]
                 if completed_missing_driver > 0:
@@ -466,7 +564,7 @@ def data_quality_checks(**context):
                 # Invalid fares
                 cur.execute("""
                     SELECT COUNT(*) FROM analytics.trip
-                    WHERE actual_fare < 0 OR actual_fare IS NULL
+                    WHERE actual_fare < 0 OR actual_fare IS NULL;
                 """)
                 invalid_fares = cur.fetchone()[0]
                 if invalid_fares > 0:
@@ -476,7 +574,7 @@ def data_quality_checks(**context):
 
                 # Duplicates check
                 cur.execute("""
-                    SELECT COUNT(*) - COUNT(DISTINCT ride_id) FROM analytics.trip
+                    SELECT COUNT(*) - COUNT(DISTINCT ride_id) FROM analytics.trip;
                 """)
                 duplicates = cur.fetchone()[0]
                 if duplicates > 0:
@@ -488,7 +586,7 @@ def data_quality_checks(**context):
                 cur.execute("""
                     SELECT status, COUNT(*) FROM analytics.trip
                     GROUP BY status
-                    ORDER BY COUNT(*) DESC
+                    ORDER BY COUNT(*) DESC;
                 """)
                 status_dist = cur.fetchall()
                 logger.info(f"📊 Ride status distribution: {status_dist}")
@@ -498,9 +596,17 @@ def data_quality_checks(**context):
 
         return {
             "total_rows": total_rows,
+            "row_limit": ROW_LIMIT,
+            "null_driver_id": null_check[2],
+            "null_booking_status": null_check[3],
+            "completed_missing_driver": completed_missing_driver,
             "invalid_fares": invalid_fares,
             "duplicates": duplicates,
-            "data_quality_passed": invalid_fares == 0 and duplicates == 0,
+            "data_quality_passed": (
+                invalid_fares ==0
+                and duplicates == 0
+                and completed_missing_driver == 0
+            ),
             "timestamp": datetime.now().isoformat(),
         }
 

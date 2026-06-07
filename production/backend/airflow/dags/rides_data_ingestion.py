@@ -89,12 +89,17 @@ COLUMN_RENAME_MAP = {
 }
 
 # Statuses where NULL driver_id is expected (e.g. Cancelled, No-show)
-NO_DRIVER_STATUES = [
+BOOKING_STATUSES = [
     "Cancelled by Rider",
     "Cancelled by Driver",
     "No Driver Found",
     "Incomplete",
     "Completed"
+]
+
+DRIVER_STATUSES = [
+    "Online",
+    "Offline"
 ]
 
 # Internal Docker PostgreSQL connection for Airflow tasks
@@ -127,11 +132,6 @@ def extract_parquet_data(**context):
         total_available = len(df)
         logger.info(f"✅ Extracted {len(df)} records | columns: {list(df.columns)}")
 
-        # Normalize timestamps
-        for col in df.columns:
-            if pd.api.types.is_datetime64_any_dtype(df[col]):
-                df[col] = pd.to_datetime(df[col]).dt.floor("us")
-
         # Apply row limit
         if len(df) > ROW_LIMIT:
             df = df.head(ROW_LIMIT)
@@ -140,11 +140,6 @@ def extract_parquet_data(**context):
             logger.info(f"✅ Extracting all {total_available} records (below row limit of {ROW_LIMIT})")
 
         logger.info(f"📊 Extracted columns: {df.columns.tolist()}")
-
-        # Normalized timestamps
-        for col in df.columns:
-            if pd.api.is_datetime64_any_dtype(df[col]):
-                df[col] = pd.to_datetime(df[col]).dt.floor("us")
 
         extracted_path = os.path.join(
             TEMP_DIR,
@@ -179,8 +174,7 @@ def transform_data(**context):
 
     try:
         extracted_path = context["task_instance"].xcom_pull(
-            task_ids="extract_parquet",
-            key="extracted_path",
+            task_ids="extract_parquet", key="extracted_path",
         )
 
         if not extracted_path:
@@ -193,7 +187,7 @@ def transform_data(**context):
         # Standardize column names
         # ========================================================
         df.columns = (
-            df.columns.str.lower()
+            df.columns.str.lower() # lowercase for consistence fetch to sql table
             .str.strip()
             .str.replace(" ", "_")
             )
@@ -231,23 +225,20 @@ def transform_data(**context):
             else:
                 raise ValueError("No rider_id column found or created")
             
-        # Handle driver_id from driver_statsu
-        if "driver_id" not in df.columns:
-            if "driver_status" in df.columns:
-                df["driver_id"] = df["driver_status"].apply(
-                    lambda s: f"DRV-{hash(str(s)) % 900000 + 100000}"
-                    if str(s).strip().lower() == "online" else None
-                )
-                logger.info("✅ Created driver_id column from driver_status")
+        # Handle driver_status from Driver Status
+        if "driver_status" not in df.columns:
+            if "Driver Status" in df.columns:
+                df["driver_status"] = df['Driver Status'].apply(lambda x: None if x in DRIVER_STATUSES else "Unknown")
+                logger.info("✅ Created driver_status column from Driver Status")
             else:
-                df["driver_id"] = None
-                logger.info("⚠️ No driver_id or driver_status column found, setting driver_id to None")
+                df["driver_status"] = None
+                logger.info("⚠️ No driver_status or Driver Status column found, setting driver_status to None")
 
-        # Force NULL driver_id for statuses where no driver is expected
+        # Force NULL driver_status for statuses where no driver is expected
         if "booking_status" in df.columns:
-            no_driver_mask = df["booking_status"].isin(NO_DRIVER_STATUES)
-            df.loc[no_driver_mask, "driver_id"] = None
-            logger.info(f"✅ Set driver_id to NULL for {no_driver_mask.sum()} records with statuses: {NO_DRIVER_STATUES}")
+            no_driver_mask = df["booking_status"].isin(BOOKING_STATUSES)
+            df.loc[no_driver_mask, "driver_status"] = None
+            logger.info(f"✅ Set driver_status to NULL for {no_driver_mask.sum()} records with statuses: {BOOKING_STATUSES}")
 
         # booking_status - keep as-is from source -- "booking_status" column maps directly to sql table (analytics.trip.booking_status)
         if "booking_status" in df.columns:
@@ -263,8 +254,11 @@ def transform_data(**context):
         # Handle actual_fare / estimated_fare -- booking_value -> actual_fare in sql
         if "actual_fare" not in df.columns and "price" in df.columns:
             df["actual_fare"] = pd.to_numeric(df["price"], errors="coerce")
-        if "estimated_fare" not in df.columns and "actual_fare" in df.columns:
-            df["estimated_fare"] = df["actual_fare"]
+
+        # Miss logic here to fill estimated_fare must using machine learning
+        """Bugs here: estimated_fare == actual_fare -- miss logic"""
+        if "estimated_fare" not in df.columns:
+            df["estimated_fare"] = 
 
         # Coordinate columns - parquet: pickup_lat, pickup_lon, drop_lat, drop_lon
         coord_map = {
@@ -513,6 +507,13 @@ def data_quality_checks(**context):
     try:
         conn = get_postgres_conn()
 
+        # Validation checks
+        total_rows = 0
+        null_check = (0, 0, 0, 0)
+        completed_missing_driver = 0
+        invalid_fares = 0
+        duplicates = 0
+
         try:
             with conn.cursor() as cur:
 
@@ -527,7 +528,7 @@ def data_quality_checks(**context):
                         SUM(CASE WHEN ride_id IS NULL THEN 1 ELSE 0 END),
                         SUM(CASE WHEN rider_id IS NULL THEN 1 ELSE 0 END),
                         SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END),
-                        SUM(CASE WHEN booking_status IS NULL THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN booking_status IS NULL THEN 1 ELSE 0 END)
                     FROM analytics.trip;
                 """)
                 null_check = cur.fetchone()
@@ -536,12 +537,12 @@ def data_quality_checks(**context):
                 # --- Driver ID null breakdown by status --
                 cur.execute("""
                     SELECT
-                        status,
+                        booking_status,
                         COUNT(*) AS total,
-                        SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver_count,
+                        SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_driver,
                         ROUND(100.0 * SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS null_pct
                     FROM analytics.trip
-                    GROUP BY status
+                    GROUP BY booking_status
                     ORDER BY total DESC;
                 """)
                 driver_by_status = cur.fetchall()
@@ -551,8 +552,9 @@ def data_quality_checks(**context):
 
                 # Only flag as problem if COMPLETED rides have null driver_id
                 cur.execute("""
-                    SELECT COUNT(*) FROM analytics.trip
-                    WHERE status = 'Completed' 
+                    SELECT COUNT(*) 
+                    FROM analytics.trip
+                    WHERE booking_status = 'Completed' 
                     AND driver_id IS NULL;
                 """)
                 completed_missing_driver = cur.fetchone()[0]
@@ -563,7 +565,8 @@ def data_quality_checks(**context):
 
                 # Invalid fares
                 cur.execute("""
-                    SELECT COUNT(*) FROM analytics.trip
+                    SELECT COUNT(*) 
+                    FROM analytics.trip
                     WHERE actual_fare < 0 OR actual_fare IS NULL;
                 """)
                 invalid_fares = cur.fetchone()[0]
@@ -584,8 +587,9 @@ def data_quality_checks(**context):
 
                 # Status distribution
                 cur.execute("""
-                    SELECT status, COUNT(*) FROM analytics.trip
-                    GROUP BY status
+                    SELECT booking_status, 
+                    COUNT(*) FROM analytics.trip
+                    GROUP BY booking_status
                     ORDER BY COUNT(*) DESC;
                 """)
                 status_dist = cur.fetchall()
@@ -594,19 +598,28 @@ def data_quality_checks(**context):
         finally:
             conn.close()
 
+        # for null is EXPECTED - are non-Completed rides -- Only fail if Completed rides are missing driver_id
+        data_quality_passed = (
+            invalid_fares == 0
+            and duplicates == 0
+            and completed_missing_driver == 0
+        )
+        logger.info(
+            f"{'✅' if data_quality_passed else '❌'}"
+            f"Data quality: {'PASSED' if data_quality_passed else 'FAILED'} | "
+        )
+
         return {
             "total_rows": total_rows,
             "row_limit": ROW_LIMIT,
+            "null_ride_id": null_check[0],
+            "null_rider_id": null_check[1],
             "null_driver_id": null_check[2],
             "null_booking_status": null_check[3],
             "completed_missing_driver": completed_missing_driver,
             "invalid_fares": invalid_fares,
             "duplicates": duplicates,
-            "data_quality_passed": (
-                invalid_fares ==0
-                and duplicates == 0
-                and completed_missing_driver == 0
-            ),
+            "data_quality_passed": data_quality_passed,
             "timestamp": datetime.now().isoformat(),
         }
 

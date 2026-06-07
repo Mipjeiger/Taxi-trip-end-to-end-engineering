@@ -23,10 +23,13 @@ CREATE TABLE IF NOT EXISTS analytics.taxi_trip_data_events (
 -- -- Extend analytics shema
 ALTER TABLE analytics.trip ADD COLUMN driver_rating DOUBLE PRECISION; -- included driver_rating column
 ALTER TABLE analytics.trip ADD COLUMN booking_status VARCHAR; -- included booking_status column
+
+ALTER TABLE analytics.trip ADD COLUMN driver_status VARCHAR; -- included driver_status column
+ALTER TABLE analytics.trip DROP COLUMN driver_id; -- drop existing driver_id column
 CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id          VARCHAR PRIMARY KEY,
     rider_id         VARCHAR NOT NULL,
-    driver_id        VARCHAR,
+    driver_status    VARCHAR,
     pickup_location  VARCHAR,
     dropoff_location VARCHAR,
     pickup_lat       DOUBLE PRECISION,
@@ -40,6 +43,7 @@ CREATE TABLE IF NOT EXISTS analytics.trip (
     distance_km      DOUBLE PRECISION,
     duration_minutes DOUBLE PRECISION,
     driver_rating    DOUBLE PRECISION,
+    booking_status   VARCHAR,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at     TIMESTAMP
 );

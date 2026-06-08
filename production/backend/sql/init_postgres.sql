@@ -114,14 +114,14 @@ GROUP BY status;
 -- View 2: Driver performance metrics
 CREATE OR REPLACE VIEW analytics.driver_metrics AS
 SELECT 
-    t.driver_id,
+    t.rider_id,
     COUNT(t.ride_id) as total_rides,
     AVG(d.rating) as avg_rating,
     SUM(t.actual_fare) as total_earnings
 FROM analytics.trip t
-JOIN analytics.drivers d ON t.driver_id = d.driver_id
-WHERE t.driver_id IS NOT NULL
-GROUP BY t.driver_id;
+JOIN analytics.drivers d ON t.rider_id = d.driver_id
+WHERE t.rider_id IS NOT NULL
+GROUP BY t.rider_id;
 
 -- View 3: Hourly ride trends
 CREATE VIEW analytics.hourly_ride_trends AS

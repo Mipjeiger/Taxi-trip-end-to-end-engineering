@@ -1,7 +1,7 @@
 import pickle
 import json
 from pathlib import Path
-import tensorflow as tf
+#import tensorflow as tf
 from typing import Dict, Any
 
 class ModelLoader:
@@ -38,7 +38,8 @@ class ModelLoader:
         """Load price prediction model (Keras)."""
         try:
             model_path = self.models_dir / 'model_price_improved.keras'
-            return tf.keras.models.load_model(model_path)
+            #return tf.keras.models.load_model(model_path)
+            return None
         except Exception as e:
             print(f"❌ Error loading price model: {e}")
             return False
@@ -48,7 +49,8 @@ class ModelLoader:
         """Load time prediction model (Keras)."""
         try:
             model_path = self.models_dir / 'model_time_improved.keras'
-            return tf.keras.models.load_model(model_path)
+            #return tf.keras.models.load_model(model_path)
+            return None
         except Exception as e:
             print(f"❌ Error loading time model: {e}")
             return False

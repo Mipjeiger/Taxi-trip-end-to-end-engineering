@@ -100,18 +100,18 @@ class MLflowService:
         # ==============================
         # Price Model (Keras)
         # ==============================
-        if not self.experiment_has_runs("Price_Prediction"):
-            self.start_experiment("Price_Prediction", "price_registration")
-            self.upload_file("model_price_improved.keras", "models")
-            self.end_run()
+        #if not self.experiment_has_runs("Price_Prediction"):
+        #    self.start_experiment("Price_Prediction", "price_registration")
+        #    self.upload_file("model_price_improved.keras", "models")
+        #    self.end_run()
 
         # ==============================
         # Time Model (Keras)
         # ==============================
-        if not self.experiment_has_runs("Time_Prediction"):
-            self.start_experiment("Time_Prediction", "time_registration")
-            self.upload_file("model_time_improved.keras", "models")
-            self.end_run()
+        #if not self.experiment_has_runs("Time_Prediction"):
+        #    self.start_experiment("Time_Prediction", "time_registration")
+        #    self.upload_file("model_time_improved.keras", "models")
+       #     self.end_run()
 
         # ==============================
         # PREPROCESSING ARTIFACTS
@@ -134,7 +134,7 @@ class MLflowService:
                 "route_hour_dict_vtat.pkl",
                 "config_summary.json"
             ]
-            
+
             for file in artifact_files:
                 self.upload_file(file, "artifacts")
             

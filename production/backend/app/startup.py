@@ -6,6 +6,7 @@ import mlflow
 import json
 import threading
 from typing import Optional
+from app.services.mlflow_service import MLflowService
 
 # ----------------------------------------------------------------
 # Set up
@@ -36,24 +37,24 @@ async def initialize_mlflow():
             logger.warning(f"⚠️ Models directory not found at {models_dir}")
             return
         
-        model_files = list(models_dir.glob("*.keras")) + list(models_dir.glob("*.pkl"))
-        logger.info(f"📂 Found {len(model_files)} model files in {models_dir}")
-        
-        # Loop through and log each model
-        for model_file in model_files:
-            logger.info(f"   - {model_file.name}")
+        files = list(models_dir.glob("*"))
+        logger.info(f"📂 Found model files: {files}")
 
-        # MLflow initialization
+        for file in files:
+            logger.info(f"📂 Logging model file to MLflow: {file.name}")
         mlflow_uri = os.getenv("MLFLOW_TRACKING_URI")
-        if mlflow_uri:
-            mlflow.set_tracking_uri(mlflow_uri)
-            logger.info(f"🔗 Connected to MLflow at {mlflow.get_tracking_uri()}")
-        else:
-            logger.warning("⚠️ MLFLOW_TRACKING_URI is not set. MLflow logging will be unavailable.")
-    
+        if not mlflow_uri:
+            logger.warning("⚠️ MLFLOW_TRACKING_URI not set in environment variables.")
+            return
+        
+        mlflow.set_tracking_uri(mlflow_uri)
+        logger.info(f"🔗 Connected to MLflow at {mlflow_uri}")
+
+        service = MLflowService(tracking_uri=mlflow_uri, models_dir="/app/models")
+        logger.info("✅ MLflow service initialized successfully.")
+
     except Exception as e:
-        logger.error(f"❌ MLflow initialization failed: {str(e)}")
-        raise
+        logger.error(f"❌ Error initializing MLflow: {e}", exc_info=True)
 
 # ----------------------------------------------------------------
 # Kafka Producer Initialization (singleton)

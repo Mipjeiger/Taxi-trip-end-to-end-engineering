@@ -11,37 +11,26 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = BASE_DIR / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
+
 class MLflowService:
     def __init__(self, tracking_uri=os.getenv("MLFLOW_TRACKING_URI"), models_dir="/app/models"):
         self.tracking_uri = tracking_uri
         self.models_dir = Path(models_dir)
         mlflow.set_tracking_uri(tracking_uri)
-        self.model_loader = ModelLoader()
+        self.model_loader = ModelLoader(models_dir=models_dir)
 
-        # Debug print actual directory contents
-        print(f"🔍 Checking models directory: {self.models_dir}")
-        print(f"📂 Directory exists: {self.models_dir.exists()}")
+        print("=" * 60)
+        print("🚀 MLFLOW INITIALIZATION")
+        print("=" * 60)
+        print(f"Tracking URI : {self.tracking_uri}")
+        print(f"🔍 Checking models directory:  : {self.models_dir}")
+        print(f"📂 Directory exists      : {self.models_dir.exists()}")
 
         if self.models_dir.exists():
             files = list(self.models_dir.glob("*"))
             print(f"📂 Files in directory: {files}")
         else:
             print(f"❌ Models directory does not exist: {self.models_dir}")
-
-    def _load_pickle(self, filename: str):
-        """Load pickle file with error handling"""
-        file_path = self.models_dir / filename
-        try:
-            if file_path.exists():
-                with open(file_path, "rb") as f:
-                    return pickle.load(f)
-            else:
-                print(f"❌ File not found: {file_path}")
-                return None
-        except Exception as e:
-            print(f"❌ Error loading pickle file {file_path}: {e}")
-            return None
-            
 
     def start_experiment(self, experiment_name, run_name=None):
         """Start MLFlow experiment run"""
@@ -63,80 +52,91 @@ class MLflowService:
         except Exception as e:
             print(f"❌ Error starting MLflow run: {e}")
             return None
+    
+    def end_run(self):
+        try:
+            mlflow.end_run()
+            print("✅ Mlflow run ended")
+        except Exception as e:
+            print(f"❌ Error ending MLflow run: {e}")
+
+    def experiment_has_runs(self, experiment_name):
+        experiment = mlflow.get_experiment_by_name(experiment_name)
         
-    def log_params(self, params):
-        """Log parameters to MLFlow"""
-        try:
-            mlflow.log_params(params)
-            print(f"✅ Logged parameters: {params}")
-        except Exception as e:
-            print(f"❌ Error logging parameters: {e}")
-
-    def log_metrics(self, metrics, step=None):
-        """Log metrics to MLFlow"""
-        try:
-            for key, value in metrics.items():
-                mlflow.log_metric(key, value, step=step)
-            print(f"✅ Logged metrics: {metrics}")
-        except Exception as e:
-            print(f"❌ Error logging metrics: {e}")
-
-    def log_model(self, model, artifact_path="models"):
-        """Log model to MLflow"""
-        try:
-            if 'keras' in str(type(model)):
-                mlflow.keras.log_model(model, artifact_path=artifact_path)
-            else:
-                mlflow.sklearn.log_model(model, artifact_path=artifact_path)
-        except Exception as e:
-            print(f"❌ Error logging model: {e}")
-
-    def log_existing_models(self):
-        """Log all existing models from models dir"""
-        try:
-            print("🔍 Logging existing models from models directory...")
-
-            # Load CTAT models
-            self.start_experiment("CTAT_Models", "ctat_models_registration")
-            ctat_models = self.model_loader.load_ctat_models()
-            if ctat_models['best_model']:
-                self.log_model(ctat_models['best_model'], artifact_path="ctat/best_model")
-            self.end_run()
-            print("✅ CTAT models logged successfully.")
-
-            # Load VTAT models
-            self.start_experiment("VTAT_Models", "vtat_models_registration")
-            vtat_models = self.model_loader.load_vtat_models()
-            if vtat_models['best_model']:
-                self.log_model(vtat_models['best_model'], artifact_path="vtat/best_model")
-            self.end_run()
-            print("✅ VTAT models logged successfully.")
-
-            # Load Price model (keras)
-            self.start_experiment("Price_Prediction", "price_model_registration")
-            price_model = self.model_loader.load_price_model()
-            if price_model:
-                self.log_model(price_model, artifact_path="price_model")
-            self.end_run()
-            print("✅ Price model logged")
-
-            # Load Time model (Keras)
-            self.start_experiment("Time_Prediction", "time_model_registration")
-            time_model = self.model_loader.load_time_model()
-            if time_model:
-                self.log_model(time_model, artifact_path="time_model")
-            self.end_run()
-            print("✅ Time model logged")
+        if experiment is None:
+            return False
         
+        runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
+        return len(runs) > 0
+    
+    def upload_file(self, file_name, artifact_path):
+        file_path = (self.models_dir / file_name)
+        if not file_path.exists():
+            print(f"❌ File not found: {file_path}")
+            return
+        
+        mlflow.log_artifact(str(file_path), artifact_path=artifact_path)
+        print(f"✅ Uploaded {file_name} to MLflow at {artifact_path}")
 
-        except Exception as e:
-            print(f"❌ Error logging existing models: {str(e)}")
+    def register_all_models(self):
+        print("\n🚀 Registering models to Mlflow...")
 
-    # Log artifacts method if missing
-    def log_artifacts(self, local_dir, artifact_path=None):
-        """Log artifacts to MLflow"""
-        try:
-            mlflow.log_artifacts(local_dir, artifact_path=artifact_path)
-            print(f"✅ Logged artifacts from {local_dir}")
-        except Exception as e:
-            print(f"❌ Error logging artifacts: {str(e)}")
+        # ==============================
+        # CTAT Models
+        # ==============================
+        if not self.experiment_has_runs("CTAT_Models"):
+            self.start_experiment("CTAT_Models", "ctat_registration")
+            self.upload_file("best_model_ctat_ultra.pkl", "models")
+            self.end_run()
+
+        # ==============================
+        # VTAT Models
+        # ==============================
+        if not self.experiment_has_runs("VTAT_Models"):
+            self.start_experiment("VTAT_Models", "vtat_registration")
+            self.upload_file("best_model_vtat_ultra.pkl", "models")
+            self.end_run()
+
+        # ==============================
+        # Price Model (Keras)
+        # ==============================
+        if not self.experiment_has_runs("Price_Prediction"):
+            self.start_experiment("Price_Prediction", "price_registration")
+            self.upload_file("model_price_improved.keras", "models")
+            self.end_run()
+
+        # ==============================
+        # Time Model (Keras)
+        # ==============================
+        if not self.experiment_has_runs("Time_Prediction"):
+            self.start_experiment("Time_Prediction", "time_registration")
+            self.upload_file("model_time_improved.keras", "models")
+            self.end_run()
+
+        # ==============================
+        # PREPROCESSING ARTIFACTS
+        # ==============================
+        if not self.experiment_has_runs("Preprocessing"):
+            self.start_experiment("Preprocessing", "preprocessing_registration")
+
+            artifact_files = [
+                "scaler.pkl",
+                "scaler_ultra.pkl",
+                "scaler_minmax.pkl",
+                "le_pickup.pkl",
+                "le_drop.pkl",
+                "pickup_location_map.pkl",
+                "drop_location_map.pkl",
+                "features.pkl",
+                "features_new.pkl",
+                "features_ultra.pkl",
+                "route_hour_dict_ctat.pkl",
+                "route_hour_dict_vtat.pkl",
+                "config_summary.json"
+            ]
+            
+            for file in artifact_files:
+                self.upload_file(file, "artifacts")
+            
+            self.end_run()
+        print("✅ Model registration completed.")

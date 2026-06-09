@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 """
 Airflow DAG: Taxi Ride Data Ingestion Pipeline
 
-Pipeline:
+Pipeline:   
 1. Extract parquet data
 2. Transform + feature engineering
 3. Load into PostgreSQL

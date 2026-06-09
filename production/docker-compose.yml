@@ -32,20 +32,68 @@ services:
       - taxi_trip_network
     restart: unless-stopped
 
+  # Minio for S3-compatible object storage (used by MLflow artifacts)
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Minio Console
+    volumes:
+      - minio_data:/data
+    networks:
+      - taxi_trip_network
+    restart: unless-stopped
+    mem_limit: 256m # Limit memory usage to prevent OOM issues
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio_init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 15;
+      mc alias set local http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY};
+      mc mb local/mlflow-models --ignore-existing;
+      exit 0;
+      "
+    networks:
+      - taxi_trip_network
   # MLflow for experiment tracking and model management
   mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
+    image: python:3.11-slim
     container_name: mlflow
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    command: >
+      bash -c "
+      pip install --no-cache-dir mlflow boto3 &&
+      mlflow server
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root s3://mlflow-models
+      --host 0.0.0.0
+      --port 5000
+      "
     ports:
       - "5001:5000"
     volumes:
       - mlflow_data:/mlflow
-    command: >
-      mlflow server
-      --backend-store-uri file:///mlflow/tracking
-      --default-artifact-root file:///mlflow/artifacts
-      --host 0.0.0.0
-      --port 5000
+    depends_on:
+      minio:
+        condition: service_healthy
     networks:
       - taxi_trip_network
     restart: unless-stopped
@@ -510,6 +558,7 @@ volumes:
   postgres_database:
   redis_data:
   redisinsight_data:
+  minio_data:
   mlflow_data:
   prometheus_data:
   grafana_data:

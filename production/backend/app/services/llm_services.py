@@ -26,51 +26,59 @@ class LLMService:
 
     # Create groq as primary LLM provider, with abstraction for future providers
     async def chat(self, messages, temperature=0.7, user_id="system", session_id="default"):
+        """Enchanced chat with strict anti-hallucination rules"""
         
-        # Inject language instruction if no system message exists
-        has_system = any(m.get("role") == "system" if isinstance(m, dict)
-                         else m.role == "system" for m in messages)
+        # Check if the database has real trip data in messages
+        has_real_data = any("REAL TRIP DATA" in str(msg.get("content", "")) for msg in messages if isinstance(msg, dict))
+
+        # Build anti-hallucination system prompt
+        anti_hallucination_prompt = """
+            You are TaxiRide AI Assistant. You MUST follow these rules STRICTLY:
+
+            ⚠️ CRITICAL RULES - VIOLATION WILL CAUSE HALLUCINATION:
+            
+            1. ONLY use information explicitly provided in "REAL TRIP DATA" sections
+            2. NEVER invent:
+            - Bus routes (TransJakarta, MetroTrans, etc.)
+            - Train routes (KRL, MRT, LRT)
+            - Vehicle types not listed in the data
+            - Prices, durations, or distances not in the data
+            3. If REAL TRIP DATA exists:
+            - Present it exactly as shown: "Based on {count} trips, {vehicle} takes ~{duration} min costing ~Rp{fare}"
+            - Let user choose from available options
+            4. If NO REAL TRIP DATA exists:
+            - Say: "I don't have historical trip data for that route. Could you try another pickup/drop location?"
+            - DO NOT guess or suggest alternatives from your knowledge
+            5. Always respond in the same language as the user (Indonesian/English)
+            
+        Remember: You are a TAXI booking assistant, NOT a public transport guide.
+        """
+        
+        # Inject anti-hallicanation instruction if no real data present
+        has_system = any(
+            msg.get("role") == "system" if isinstance(msg, dict) else msg.role == "system" for msg in messages
+        ) 
+
         if not has_system:
-            lang_msg = {
-                "role": "system",
-                "content": """
-                You are TaxiRide AI Assistant.
-                
-                Rules:
-                - Reply in the same language used by the user.
-                - Indonesian input → Indonesian output.
-                - English input → English output.
-                - Do not switch languages unless asked.
-                - Be concise and helpful.
-                - Never repeat greeting messages.
-                - Answer the question directly.
-                """
-                }
-            messages = [lang_msg] + list(messages)
-        # Validate all messages have required fields before making API call
-        for i, msg in enumerate(messages):
+            messages = [{"role": "system", "content": anti_hallucination_prompt}] + list(messages)
+        elif not has_real_data:
+            # Add as additional instruction if system exists but no real data
+            for msg in messages:
+                if isinstance(msg, dict) and msg.get("role") == "system":
+                    msg["content"] = anti_hallucination_prompt + "\n\n" + msg["content"]
+                    break
 
-            if hasattr(msg, "model_dump"):
-                msg = msg.model_dump()  # Convert Pydantic model to dict if necessary
-
-            if "role" not in msg or not msg["role"]:
-                raise ValueError(f"Message {i} is missing 'role' field.")
-            
-            if "content" not in msg or not msg["content"] or not msg["content"].strip():
-                raise ValueError(f"Message {i} has empty 'content' field.")
-            
-            if msg["role"] not in ["user", "assistant", "system"]:
-                raise ValueError(f"Message {i} has invalid 'role': {msg['role']}.")
-        logger.info(f"✅ Validated {len(messages)} messages for LLM chat request.")
-
+        # Rest of existing _groq_chat call remains the same
         if not self.provider or self.provider == "groq":
-            return await self._groq_chat(messages=messages, 
-                                         temperature=temperature,
-                                         user_id=user_id,
-                                         session_id=session_id)
+            return await self._groq_chat(
+                messages=messages,
+                temperature=temperature,
+                user_id=user_id,
+                session_id=session_id
+            )
         else:
-            raise NotImplementedError(f"LLM provider {self.provider} not implemented.")
-        
+            raise NotImplementedError(f"LLM provider '{self.provider}' is not supported yet.")
+
     async def _groq_chat(self, 
                          messages: List[Dict[str, str]], 
                          temperature: float,

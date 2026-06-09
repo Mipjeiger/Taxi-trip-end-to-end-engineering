@@ -2,6 +2,7 @@ import logging
 import time
 import uuid
 import json
+import re
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.postgres_db import get_postgres_db
@@ -13,6 +14,7 @@ from typing import List, Optional, Dict
 from datetime import datetime
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
+from app.services.trip_retriever import TripRetriever
 
 
 router = APIRouter()

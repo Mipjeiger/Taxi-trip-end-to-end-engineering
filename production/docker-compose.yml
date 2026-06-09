@@ -207,6 +207,10 @@ services:
   metabase:
     image: metabase/metabase:latest
     container_name: metabase
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     ports:
       - "4001:3000"   
     volumes:

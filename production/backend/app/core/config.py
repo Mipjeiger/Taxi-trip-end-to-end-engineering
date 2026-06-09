@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     # ---- File paths -----
     # These were module-level variables before — now proper Settings fields
-    PARQUET_PATH: str = str(BASE_DIR / 'backend' / 'database' / 'taxi_trip_engineering.parquet')
+    PARQUET_PATH: str = str(BASE_DIR / 'backend' / 'database' / 'taxi_trip_engineering_2.parquet')
     MODEL_PATH: str = str(BASE_DIR / 'backend' / 'models')
 
     # --- Computed Properties ---

@@ -6,3 +6,5 @@
 {"timestamp":"2026-06-04T14:23:40.755881","prompt_length":11,"response_length":108,"response_time_ms":1450.3567218780518,"tokens_used":310,"sentiment":"neutral","entity_count":49,"complexity_score":1.0}
 {"timestamp":"2026-06-04T14:24:15.074901","prompt_length":11,"response_length":130,"response_time_ms":956.0532569885254,"tokens_used":315,"sentiment":"neutral","entity_count":36,"complexity_score":1.0}
 {"timestamp":"2026-06-04T14:57:56.363247","prompt_length":10,"response_length":81,"response_time_ms":1342.8092002868652,"tokens_used":256,"sentiment":"neutral","entity_count":32,"complexity_score":0.888}
+{"timestamp":"2026-06-09T14:31:02.275510","prompt_length":1,"response_length":6,"response_time_ms":1186.3903999328613,"tokens_used":112,"sentiment":"neutral","entity_count":0,"complexity_score":0.076}
+{"timestamp":"2026-06-09T14:41:08.479527","prompt_length":22,"response_length":84,"response_time_ms":5682.816982269287,"tokens_used":254,"sentiment":"neutral","entity_count":20,"complexity_score":0.988}

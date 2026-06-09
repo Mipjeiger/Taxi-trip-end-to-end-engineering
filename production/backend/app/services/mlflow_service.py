@@ -69,74 +69,102 @@ class MLflowService:
         runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
         return len(runs) > 0
     
-    def upload_file(self, file_name, artifact_path):
-        file_path = (self.models_dir / file_name)
-        if not file_path.exists():
-            print(f"❌ File not found: {file_path}")
-            return
+    def upload_file(self, filename: str, artifact_path: str = "models"):
+        """Upload file as MLflow artifact"""
         
+        file_path = (self.models_dir / filename)
+        print(f"🚀 Starting upload: {file_path}")
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        print(f"🚀 Starting upload: {filename}")
         mlflow.log_artifact(str(file_path), artifact_path=artifact_path)
-        print(f"✅ Uploaded {file_name} to MLflow at {artifact_path}")
+        print(f"✅ Successfully uploaded {filename} to MLflow under {artifact_path}")
 
     def register_all_models(self):
-        print("\n🚀 Registering models to Mlflow...")
+        """
+        Register all models and artifacts to MLflow.
+        Safely checks with logging detailed.
+        """
+        print("🚀 Starting model registration to MLflow...")
 
-        # ==============================
-        # CTAT Models
-        # ==============================
-        if not self.experiment_has_runs("CTAT_Models"):
-            self.start_experiment("CTAT_Models", "ctat_registration")
-            self.upload_file("best_model_ctat_ultra.pkl", "models")
-            self.end_run()
+        registrations = [
+            {
+                "experiment": "CTAT_Models",
+                "run_name": "ctat_registration",
+                "files": ["best_model_ctat_ultra.pkl"],
+                "artifact_path": "models"
+            },
+            {
+                "experiment": "VTAT_Models",
+                "run_name": "vtat_registration",
+                "files": ["best_model_vtat_ultra.pkl"],
+                "artifact_path": "models"
+            },
+            {
+                "experiment": "Preprocessing",
+                "run_name": "preprocessing_registration",
+                "files": [
+                    "scaler.pkl",
+                    "scaler_ultra.pkl",
+                    "scaler_minmax.pkl",
+                    "le_pickup.pkl",
+                    "le_drop.pkl",
+                    "pickup_location_map.pkl",
+                    "drop_location_map.pkl",
+                    "features.pkl",
+                    "features_new.pkl",
+                    "features_ultra.pkl",
+                    "route_hour_dict_ctat.pkl",
+                    "route_hour_dict_vtat.pkl",
+                    "config_summary.json"
+                ],
+                "artifact_path": "artifacts"
+            }
+        ]
 
-        # ==============================
-        # VTAT Models
-        # ==============================
-        if not self.experiment_has_runs("VTAT_Models"):
-            self.start_experiment("VTAT_Models", "vtat_registration")
-            self.upload_file("best_model_vtat_ultra.pkl", "models")
-            self.end_run()
+        for reg in registrations:
+            experiment_name = reg["experiment"]
 
-        # ==============================
-        # Price Model (Keras)
-        # ==============================
-        #if not self.experiment_has_runs("Price_Prediction"):
-        #    self.start_experiment("Price_Prediction", "price_registration")
-        #    self.upload_file("model_price_improved.keras", "models")
-        #    self.end_run()
+            try:
+                print(f"\n{'=' * 60}")
+                print(f"📦 Processing experiment: {experiment_name}")
+                print(f"{'=' * 60}")
 
-        # ==============================
-        # Time Model (Keras)
-        # ==============================
-        #if not self.experiment_has_runs("Time_Prediction"):
-        #    self.start_experiment("Time_Prediction", "time_registration")
-        #    self.upload_file("model_time_improved.keras", "models")
-       #     self.end_run()
+                if self.experiment_has_runs(experiment_name):
+                    print(f"⏩ Skipping {experiment_name} (already registered)")
+                    continue
 
-        # ==============================
-        # PREPROCESSING ARTIFACTS
-        # ==============================
-        if not self.experiment_has_runs("Preprocessing"):
-            self.start_experiment("Preprocessing", "preprocessing_registration")
+                self.start_experiment(experiment_name, run_name=reg["run_name"])
 
-            artifact_files = [
-                "scaler.pkl",
-                "scaler_ultra.pkl",
-                "scaler_minmax.pkl",
-                "le_pickup.pkl",
-                "le_drop.pkl",
-                "pickup_location_map.pkl",
-                "drop_location_map.pkl",
-                "features.pkl",
-                "features_new.pkl",
-                "features_ultra.pkl",
-                "route_hour_dict_ctat.pkl",
-                "route_hour_dict_vtat.pkl",
-                "config_summary.json"
-            ]
+                for file_name in reg["files"]:
+                    
+                    try:
+                        file_path = self.models_dir / file_name
+                        print(f"📤 Uploading {file_name}...")
+                        print(f"📁 Full path: {file_path}")
 
-            for file in artifact_files:
-                self.upload_file(file, "artifacts")
-            
-            self.end_run()
-        print("✅ Model registration completed.")
+                        if not file_path.exists():
+                            print(f"❌ File not found: {file_path}")
+                            continue
+
+                        self.upload_file(file_name, artifact_path=reg["artifact_path"])
+                        print(f"✅ Successfully uploaded {file_name} to {experiment_name}")
+
+                    except Exception as e:
+                        print(f"❌ Error uploading {file_name} to {experiment_name}: {e}")
+
+                # End the MLflow run after processing all files for the experiment
+                self.end_run()
+                print(f"✅ Completed registration for {experiment_name}")
+
+            except Exception as e:
+                print(f"❌ Error processing experiment {experiment_name}: {e}")
+
+                try:
+                    self.end_run()
+                except:
+                    pass
+
+        print("\n🚀 Model registration process completed.")

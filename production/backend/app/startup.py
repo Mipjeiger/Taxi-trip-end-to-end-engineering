@@ -5,6 +5,7 @@ import os
 import mlflow
 import json
 import threading
+import time
 from typing import Optional
 from app.services.mlflow_service import MLflowService
 
@@ -43,6 +44,7 @@ async def initialize_mlflow():
         for file in files:
             logger.info(f"📂 Logging model file to MLflow: {file.name}")
         mlflow_uri = os.getenv("MLFLOW_TRACKING_URI")
+
         if not mlflow_uri:
             logger.warning("⚠️ MLFLOW_TRACKING_URI not set in environment variables.")
             return
@@ -50,7 +52,9 @@ async def initialize_mlflow():
         mlflow.set_tracking_uri(mlflow_uri)
         logger.info(f"🔗 Connected to MLflow at {mlflow_uri}")
 
+        # Register models to MLflow (if not already registered)
         service = MLflowService(tracking_uri=mlflow_uri, models_dir="/app/models")
+        service.register_all_models()
         logger.info("✅ MLflow service initialized successfully.")
 
     except Exception as e:

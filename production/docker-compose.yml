@@ -82,10 +82,11 @@ services:
       bash -c "
       pip install --no-cache-dir mlflow boto3 &&
       mlflow server
-      --backend-store-uri sqlite:///mlflow.db
-      --default-artifact-root s3://mlflow-models
       --host 0.0.0.0
       --port 5000
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root s3://mlflow-models
+      --allowed-hosts '*'
       "
     ports:
       - "5001:5000"
@@ -293,11 +294,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '1'
+          cpus: '1.0'
           memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     environment:
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
@@ -358,8 +359,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '1.0'
+          memory: 1G
         reservations:
           cpus: '0.5'
           memory: 512M
@@ -374,7 +375,7 @@ services:
       AIRFLOW__CORE__PARALLELISM: 2
       AIRFLOW__SCHEDULER__MAX_THREADS: 1
       AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 300
-      AIRFLOW__SCHEDULER__PROCESSOR_POLL_INTERVAL: 1
+      AIRFLOW__SCHEDULER__PROCESSOR_POLL_INTERVAL: 2
       AIRFLOW_CONN_SUPABASE_DEFAULT: ${AIRFLOW_CONN_SUPABASE_DEFAULT}
       # Supabase credentials
       SUPABASE_HOST: ${SUPABASE_HOST}
@@ -396,7 +397,7 @@ services:
       - ./backend/airflow/config:/opt/airflow/config
       - ./backend/database:/opt/airflow/database
       - airflow_logs_volume:/opt/airflow/logs
-    command: bash -c "airflow db migrate && airflow scheduler"
+    command: airflow scheduler # removed airflow db migrate to prevent DB race condition with webserver
     depends_on:
       airflow-db:
         condition: service_healthy

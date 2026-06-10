@@ -93,22 +93,26 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
         # STEP 1: Extract pickup and dropoff locations from query
         # ============================================================
         pickup = None
-        drop = None
+        dropoff = None
 
-        # Pattern 1: "From X to Y" or "from X to Y?"
-        pattern1 = r"(?:from|dari)\s+([^t]+?)\s+(?:to|ke|menuju)\s+([^?\.]+)"
-        match1 = re.search(pattern1, user_message, re.IGNORECASE)
+        # Multiple pattern to handle different user phrasings
+        patterns = [
+            r"(?:from|dari)\s+([^t]+?)\s+(?:to|ke|menuju)\s+([^?\.]+)",
+            r"(?:between|antara)\s+([^a]+?)\s+(?:and|dan)\s+([^?\.]+)",
+            r"(?:go|pergi)\s+(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)",
+            r"([^?\.]+?)\s+(?:to|ke)\s+([^?\.]+)",
+        ]
 
-        # Pattern 2: "between X and Y"
-        pattern2 = r"(?:between|antara)\s+([^a]+?)\s+(?:and|dan)\s+([^?\.]+)"
-        match2 = re.search(pattern2, user_message, re.IGNORECASE)
+        for pattern in patterns:
+            match = re.search(pattern, user_message, re.IGNORECASE)
+            if match:
+                pickup = match.group(1).strip()
+                dropoff = match.group(2).strip()
+                logger.info(f"📍 Extracted locations - Pickup: '{pickup}', Dropoff: '{dropoff}'")
+                
+                break
 
-        if match1:
-            pickup = match1.group(1).strip()
-            dropoff = match1.group(2).strip()
-        elif match2:
-            pickup = match2.group(1).strip()
-            dropoff = match2.group(2).strip()
+        # Cleanup locations (remove extra words)
 
         # ============================================================
         # STEP 2: Retrieve REAL trip data from PostgreSQL

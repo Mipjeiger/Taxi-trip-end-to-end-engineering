@@ -1,16 +1,16 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 Base = declarative_base()
 
 class Trip(Base):
     """Model for sql table (analytics.trip)"""
-    __table__name = "trip"
-    __table_args__ = {'schema': 'analytics'}
+    __tablename__ = "trip"
+    __table_args__ = {'schema': 'analytics', 'extend_existing': True}
 
-    ride_id: str = Column(String, primary_key=True)
+    ride_id: str = Column(String, primary_key=True, index=True)
     rider_id: str = Column(String)
     driver_status: str = Column(String)
     pickup_location: str = Column(String)
@@ -29,3 +29,6 @@ class Trip(Base):
     booking_status: str = Column(String)
     created_at: datetime = Column(DateTime)
     completed_at: Optional[datetime] = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<Trip(ride_id={self.ride_id}, pickup={self.pickup_location}, dropoff={self.dropoff_location})>"

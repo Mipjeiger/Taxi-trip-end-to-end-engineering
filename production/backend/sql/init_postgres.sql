@@ -97,6 +97,19 @@ CREATE INDEX IF NOT EXISTS idx_llm_user_id        ON analytics.llm_interactions(
 CREATE INDEX IF NOT EXISTS idx_llm_session_id     ON analytics.llm_interactions(session_id);
 
 -- ================================================================
+-- Create Database Index for Performance (LLM interactions)
+-- ================================================================
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_trip_pickup_location 
+ON analytics.trip USING gin (lower(pickup_location) gin_trgm_ops);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_trip_dropoff_location 
+ON analytics.trip USING gin (lower(dropoff_location) gin_trgm_ops);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_trip_status_ride_type 
+ON analytics.trip (status, ride_type);
+
+-- if don't have trigram extension:
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- ================================================================
 -- Create analytical views for common queries
 -- ================================================================
 

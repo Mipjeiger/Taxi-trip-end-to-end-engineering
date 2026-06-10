@@ -98,12 +98,15 @@ postgres_con = AnalyticdDatabase()
 
 async def get_postgres_db() -> AsyncGenerator[AsyncSession, None]:
     """
-    FastAPI dependency to get analytics databsase session
-    Use this instead of get_db() for analytics queries to avoid trouble connection between supabase pool
+    FastAPI dependency to get analytics database session
+    Use this instead of get_db() for analytics queries to avoid connection issues between supabase pool
+    
+    This function automatically sets the schema search path to include 'analytics'
+    so you can query tables without specifying schema prefix.
 
     Usage in route:
         @router.get("/endpoint")
-        async def my_endpoint(db: AsyncSession = Depends(get_analytics_db)):
+        async def my_endpoint(db: AsyncSession = Depends(get_postgres_db)):
     """
     async with postgres_con.SessionLocal() as session:
         try:

@@ -89,61 +89,164 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
     try:
         user_message = request.messages[-1].content if request.messages else ""
 
-        # Step 1: Embed user message for context search
+        # ============================================================
+        # STEP 1: Extract pickup and dropoff locations from query
+        # ============================================================
+        pickup = None
+        drop = None
+
+        # Pattern 1: "From X to Y" or "from X to Y?"
+        pattern1 = r"(?:from|dari)\s+([^t]+?)\s+(?:to|ke|menuju)\s+([^?\.]+)"
+        match1 = re.search(pattern1, user_message, re.IGNORECASE)
+
+        # Pattern 2: "between X and Y"
+        pattern2 = r"(?:between|antara)\s+([^a]+?)\s+(?:and|dan)\s+([^?\.]+)"
+        match2 = re.search(pattern2, user_message, re.IGNORECASE)
+
+        if match1:
+            pickup = match1.group(1).strip()
+            dropoff = match1.group(2).strip()
+        elif match2:
+            pickup = match2.group(1).strip()
+            dropoff = match2.group(2).strip()
+
+        # ============================================================
+        # STEP 2: Retrieve REAL trip data from PostgreSQL
+        # ============================================================
+        real_trips = []
+
+        if pickup and dropoff:
+            real_trips = await TripRetriever.find_similar_routes(
+                db=db,
+                pickup_keyword=pickup,
+                dropoff_keyword=dropoff,
+                limit=5
+            )
+            logger.info(f"🔍 Retrieved {len(real_trips)} real trips from DB for pickup='{pickup}' and dropoff='{dropoff}'")
+
+        # ============================================================
+        # STEP 3: Build context message with REAL data
+        # ============================================================
+        context_message = None
+
+        if real_trips:
+            # Format real trip data gracefully
+            trip_options = []
+            for trip in real_trips:
+                option = f"• {trip['vehicle_type']}:"
+                if trip['avg_duration_min']:
+                    option += f"~{trip['avg_duration_min']} minutes,"
+                if trip['avg_distance_km']:
+                    option += f"~{trip['avg_distance_km']} km,"
+                if trip['avg_actual_fare']:
+                    option += f"~Rp{trip['avg_actual_fare']:,}, "
+                option += f"based on {trip['trip_count']} historical trips"
+                if trip['avg_driver_rating']:
+                    option += f" (⭐ {trip['avg_driver_rating']}/5 rating)"
+                trip_options.append(option)
+
+            context_content = f"""
+            ═══════════════════════════════════════════════════════════
+            REAL TRIP DATA from database for {pickup} -> {dropoff}:
+            ═══════════════════════════════════════════════════════════
+
+            {chr(10).join(trip_options)}
+
+            ═══════════════════════════════════════════════════════════
+            INSTRUCTIONS:
+            1. ONLY use the vehicle types listed above (do not invent others)
+            2. Present the actual numbers exactly as shown
+            3. Ask user which vehicle they prefer
+            4. Do NOT suggest public transportation (bus, train, grab, gojek, etc.)
+            """
+
+            context_message = {"role": "system", "content": context_content}
+        else:
+            context_content = f"""
+            ═══════════════════════════════════════════════════════════
+            NO HISTORICAL TRIP DATA FOUND in database for {pickup} -> {dropoff}.
+            ═══════════════════════════════════════════════════════════
+            
+            Route searched: {pickup if pickup else "unknown"} -> {dropoff if dropoff else "unknown"}
+
+            INSTRUCTIONS:
+            1. Tell user: "I don't have historical trip data for '{pickup} to {dropoff}'"
+            2. Ask user to try different locations or check spelling
+            3. DO NOT invent routes, times, or prices from your knowledge
+            4. DO NOT suggest public transportation (bus, train, grab, gojek, etc.)
+            ═══════════════════════════════════════════════════════════
+            """
+
+            context_message = {"role": "system", "content": context_content}
+
+        # ============================================================
+        # STEP 4: Build final messages for LLM
+        # ============================================================
+        # Start with context message (highest priority)
+        messages = [context_message]
+
+        # Add original conversation history
+        for msg in request.messages:
+            messages.append(msg.model_dump())
+
+        # Add optional Qdrant context if available (lower priority than real DB data)
         query_vector = embed_text(user_message)
 
-        # Step 2: Search Qdrant for similar conversation history if context is provided
-        context_results = []
         if query_vector:
             try:
-                qdrant_vector_db.create_collection(
-                    "chat_history",
-                    vector_size=384 # BAAI/bge-small-en-v1.5 vector size
-                )
+                qdrant_vector_db.create_collection("chat_history", vector_size=384)
                 context_results = qdrant_vector_db.search_vector(
                     collection_name="chat_history",
                     query_vector=query_vector,
                     limit=3
                 )
-                logger.info(f"🔍 Retrieved {len(context_results)} context results from Qdrant for user: {request.user_id}")
+                if context_results:
+                    past_context = "\n".join([
+                        f"- {r['metadata'].get('prompt', '?')[:100]}"
+                        for r in context_results
+                    ])
+                    messages.append({
+                        "role": "system",
+                        "content": f"Past conversation context:\n{past_context}\n(Use this conversation flow, but prioritize REAL TRIP DATA above)"
+                    })
             except Exception as e:
-                logger.error(f"❌ Error occurred while searching Qdrant: {e}")
+                logger.warning(f"❌ Qdrant search failed: {e}")
 
-        # Step 3: Build message for LLM with optional context ijnection
-        messages = [msg.model_dump() for msg in request.messages]
+        # ============================================================
+        # STEP 5: Call LLM with strict temperature
+        # ============================================================
+        logger.info(f"💬 Sending to LLM with real trip data: {len(real_trips)} options")
+        response = await llm_service.chat(
+            messages=messages,
+            temperature=0.3, # Lower temperature = less hallucination, more reliance on provided data
+            user_id=request.user_id,
+            session_id=session_id
+        )
 
-        if context_results:
-            past_context = "\n".join([f"- {r['metadata'].get('prompt', '?')} -> {r['metadata'].get('response', '?')[:100]}"]
-                                     for r in context_results)
-            context_system_msg = {
-                "role": "system",
-                "content": f"Relevant past interactions:\n{past_context}\nUse this information to provide a better response."
-            }
-            messages = [context_system_msg] + messages
+        # ============================================================
+        # STEP 6: Validate response (anti-hallucination checks)
+        # ============================================================
+        hallucination_keywords = ['transjakarta', 'bus', 'train', 'krl', 'mrt', 'lrt', 'angkot', 'grab', 
+                                  'gojek', 'bluebird', 'maxim', 'didi', 'uber']
+        detected_hallucinations = [kw for kw in hallucination_keywords if kw in response.lower()]
+        
+        if detected_hallucinations and not real_trips:
+            logger.warning(f"⚠️ Hallucination detected in LLM response: {detected_hallucinations}")
+            response = "I apologize, but I don't have real taxi data for that route. Could you please specify different pickup or dropoff" \
+            "locations? I can only provide information based on our actual trip history data."
 
-        # Inject request.context dict if provided
-        if request.context:
-            messages = [{
-                "role": "system",
-                "content": f"Current context:\n{json.dumps(request.context, indent=2)}"
-            }] + messages
-
-        # Step 4: Call LLm
-        logger.info(f"💬 LLM Request: {user_message}")
-        response = await llm_service.chat(messages=messages, 
-                                          temperature=request.temperature,
-                                          user_id=request.user_id,
-                                          session_id=session_id)
-
-        # Step 5: Calculate metrics
+        # ============================================================
+        # STEP 7: Store in Qdrant
+        # ============================================================
         response_time_ms = int((time.time() - start_time) * 1000)
         tokens_estimate = len(user_message.split()) + len(response.split())
-        cost_estimate = (tokens_estimate / 1000) * 0.0001
+        cost_estimate = (tokens_estimate / 1000) * 0.0001 # Estimated cost estimation
 
-        # Step 6: Store in Qdrant
         if query_vector:
             try:
-                point_id = abs(hash(session_id + user_message)) % (10**9)  # Simple hash for point ID
+                point_id = abs(hash(session_id + user_message)) % (10**9)
+                
+                # Qdrant store add point with metadata for monitoring
                 qdrant_vector_db.add_point(
                     collection_name="chat_history",
                     point_id=str(point_id),
@@ -152,17 +255,17 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
                         "user_id": request.user_id,
                         "session_id": session_id,
                         "prompt": user_message,
-                        "response": response[:500], # Truncate response for metadata storage (Save space)
+                        "response": response[:500],
                         "response_time_ms": response_time_ms,
+                        "real_trips_used": len(real_trips)
                     }
                 )
-                logger.info(f"✅ Stored chat interaction in Qdrant with point ID: {point_id}")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to store chat interaction in Qdrant: {e}")
-        else:
-            logger.warning(f"⚠️ Skipping Qdrant storage due to embedding failure for user: {request.user_id}")
+                logger.warning(f"❌ Failed to store in Qdrant: {e}")
 
-        # Step 7: Log to Evidently for LLM Audit - PostgreSQL storage database in llm interactions
+        # ============================================================
+        # STEP 8: Log to Evidently to monitor for future analysis
+        # ============================================================
         await evidently_monitor.log_llm_response(
             db=db,
             user_id=request.user_id,
@@ -171,7 +274,7 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
             response=response,
             response_time_ms=response_time_ms,
             tokens_used=tokens_estimate,
-            cost=cost_estimate
+            cost=cost_estimate,
         )
 
         return {
@@ -181,14 +284,16 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
                 "response_time_ms": response_time_ms,
                 "tokens": tokens_estimate,
                 "cost": f"${cost_estimate:.6f}",
-                "context_retrieved": len(context_results),
-                "vector_stored": query_vector is not None
+                "real_trips_used": len(real_trips),
+                "hallucination_blocked": len(detected_hallucinations) > 0,
+                "pickup_extracted": pickup,
+                "dropoff_extracted": drop
             }
         }
     
     except Exception as e:
-        logger.error(f"Error occurred while processing LLM request: {e}")
-        raise HTTPException(status_code=500, detail=f"Error processing chat request: {e}")
+        logger.error(f"❌ Error in /chat endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
 
 @router.post("/recommend-route")
 async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredictor = Depends(get_ml_predictor)):

@@ -1,10 +1,11 @@
-from email.mime import text
 import logging
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any, List
+from qdrant_client.http import models
 from qdrant_client import QdrantClient
+from app.core.config import settings
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from sqlalchemy import text
 
@@ -38,51 +39,96 @@ class QdrantVectorDB:
 
     def __init__(self):
         self.client = None
-        self._initialize()
+        self.connected = False
+        self._initialize_client()
 
-    def _initialize(self):
+    def _initialize_client(self):
         """Initialize Qdrant client connection"""
         try:
-            qdrant_host = os.getenv("QDRANT_CLUSTER_URL")
-            qdrant_api_key = os.getenv("QDRANT_API_KEY")
+            if not settings.QDRANT_URL or not settings.QDRANT_URL.strip():
+                logger.error("❌ QDRANT_URL is not set in environment variables.")
+                self.connected = False
+                self.client = None
+                return
 
+            # Extract hostname for logging (mask sensitive info)
+            url = settings.QDRANT_URL.rstrip('/')
+            # Log only the hostname, not the full URL with potential credentials
+            hostname = url.replace('https://', '').replace('http://', '').split('/')[0]
+            logger.info(f"🔗 Connecting to Qdrant at: {hostname}")
+
+            # Initialie client with credentials
             self.client = QdrantClient(
-                url=qdrant_host,
-                api_key=qdrant_api_key,
-                timeout=30
+                url=url,
+                api_key=settings.QDRANT_API_KEY,
+                timeout=60,
+                prefer_grpc=False # Use REST API for better compatibility in Docker
             )
 
-            logger.info(f"✅ Connected to Qdrant at {qdrant_host}")
-            
+            # Test connection without logging sensitive details data
+            self.client.get_collections()
+            self.connected = True
+            logger.info("✅ Successfully connected to Qdrant vector database.")
+
         except Exception as e:
             logger.error(f"❌ Failed to initialize Qdrant client: {e}")
-            raise
+            self.connected = False
+            self.client = None
 
-    def create_collection(self, collection_name: str, vector_size: int = 784):
-        """Create a vector collection for storing embeddings"""
+    def create_collection(self, collection_name: str, vector_size: int = 384):
+        """Create a new collection for storing embeddings"""
         try:
-            # Check if collection exists
-            collections = self.client.get_collections()
-            existing_names = [col.name for col in collections.collections]
+            if not self.client:
+                logger.error("❌ Qdrant client is not initialized. Cannot create collection.")
+                return
+
+            # Get existing collections
+            collections = self.client.get_collections().collections
+            existing_names = [col.name for col in collections]
 
             if collection_name in existing_names:
-                logger.info(f"⚠️ Collection '{collection_name}' already exists. Skipping creation.")
-                return
-            
-            # Create new collection
-            self.client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=vector_size,
-                    distance=Distance.COSINE # Cosine similarity for semantic search
+
+                # Check vector size
+                collection_info = self.client.get_collection(collection_name)
+                existing_size = collection_info.config.params.vectors.size
+
+                if existing_size != vector_size:
+                    logger.warning(f"⚠️ Collection '{collection_name}' already exists with different vector size ({existing_size}). Consider deleting and recreating if this is an issue.")
+                
+
+                    # Delete old collection
+                    self.client.delete_collection(collection_name=collection_name)
+                    logger.info(f"🗑️ Deleted existing collection '{collection_name}' to create a new one.")
+
+                    # Create new collection
+                    self.client.create_collection(
+                        collection_name=collection_name,
+                        vectors_config=models.VectorParams(
+                            size=vector_size,
+                            distance=models.Distance.COSINE # Cosine similarity for semantic search
+                        )
+                    )
+                else:
+                    logger.debug(f"📂 Collection '{collection_name}' does not exist. Creating new collection.")
+
+            else:
+
+                # Create new collection
+                self.client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(
+                        size=vector_size,
+                        distance=Distance.COSINE # Cosine similarity for semantic search
+                    )
                 )
-            )
-            logger.info(f"✅ Collection '{collection_name}' created successfully.")
-            logger.info(f"📊 Collection '{collection_name}' vector size: {vector_size}, distance metric: COSINE")
+                logger.info(f"✅ Created collection '{collection_name}'")
+            
+            return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to create Qdrant collections: {e}")
-            raise
+            logger.error(f"❌ Failed to create Qdrant collections: {type(e).__name__}")
+            
+            return False
 
     def add_point(
         self,
@@ -102,25 +148,29 @@ class QdrantVectorDB:
         - etc."""
         try:
 
-            logger.info(f"🔍 Adding point to collection '{collection_name}' with ID '{point_id}' and metadata: {metadata}")
-            logger.info(f"🔍 Vector length: {len(vector)} (should match collection vector size)")
-
-            # Assuming vector is provided directly (not generated from text)
-            point = PointStruct(
-                id=int(point_id) if str(point_id).isdigit() else abs(hash(point_id)) % (10**9), # Ensure numeric ID for Qdrant
+            if not self.client:
+                logger.error("❌ Qdrant client is not initialized. Cannot add point.")
+                return False
+            
+            # Sanitize metadata fro storage (remove sensitive fields if any)
+            safe_metadata = {k: v for k, v in metadata.items() if k not in ['api_key', 'token', 'password', 'secret']}
+            
+            point = models.PointStruct(
+                id=str(point_id),
                 vector=vector,
-                payload=metadata # Store metadata for filtering and retrieval
+                payload=safe_metadata
             )
 
             self.client.upsert(
                 collection_name=collection_name,
                 points=[point]
             )
-            logger.info(f"✅ Added point '{point_id}' to collection '{collection_name}' with metadata: {metadata}")
+            logger.debug(f"✅ Added point '{point_id}' to collection '{collection_name}' with metadata: {metadata}")
+            return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to add point to Qdrant: {e}")
-            raise
+            logger.error(f"❌ Failed to add point: {type(e).__name__}")
+            return False
 
     def search_vector(
             self,
@@ -131,7 +181,9 @@ class QdrantVectorDB:
     ):
         """Search for similar vectors in the collection"""
         try:
-            logger.info(f"🔍 Searching for similar vectors in collection '{collection_name}' with query vector length: {len(query_vector)}")
+            if not self.client:
+                logger.error("❌ Qdrant client is not initialized. Cannot perform search.")
+                return []
 
             results = self.client.search(
                 collection_name=collection_name,
@@ -139,29 +191,59 @@ class QdrantVectorDB:
                 limit=limit,
                 score_threshold=score_threshold # Minimum similarity score to consider
             )
-            logger.info(f"🔍 Found {len(results)} similar vectors in collection '{collection_name}'")
 
-            return [
-                {
-                    "id": result.id,
-                    "score": result.score,
-                    "metadata": result.payload
-                }
-                for result in results
-            ]
+            formatted = []
+            for result in results:
+                # Sanitize metadata from search results
+                safe_metadata = result.payload or {}
+                if safe_metadata:
+                    safe_metadata = {k: v for k, v in safe_metadata.items() if k not in ['api_key', 'token', 'password', 'secret']}
+
+                    formatted.append({
+                        "id": result.id,
+                        "score": result.score,
+                        "metadata": safe_metadata
+                    })
+            logger.debug(f"🔍 Found {len(results)} similar vectors in collection '{collection_name}'")
+
+            return formatted
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to search similar vectors in Qdrant: {type(e).__name__}")
+            return []
+
+    def delete_collection(self, collection_name: str) -> bool:
+        """Delete a collection (use with caution)"""
+        try:
+            if not self.client:
+                logger.error("❌ Qdrant client not initialized")
+                return False
+            
+            self.client.delete_collection(collection_name)
+            logger.info(f"✅ Deleted collection '{collection_name}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to delete collection: {type(e).__name__}")
+            return False
+
+    def get_collection_info(self, collection_name: str) -> Optional[Dict]:
+        """Get collection information and stats"""
+        try:
+            if not self.client:
+                return None
+            
+            info = self.client.get_collection(collection_name)
+            return {
+                "name": collection_name,
+                "vectors_count": info.vectors_count,
+                "points_count": info.points_count,
+                "vector_size": info.config.params.vectors.size,
+            }
         
         except Exception as e:
-            logger.error(f"❌ Failed to search similar vectors in Qdrant: {e}")
-            raise
-
-    # Delete collection (for testing and cleanup)
-    def delete_collection(self, collection_name: str):
-        try:
-            self.client.delete_collection(collection_name=collection_name)
-            logger.info(f"✅ Collection '{collection_name}' deleted successfully.")
-        except Exception as e:
-            logger.error(f"❌ Failed to delete collection '{collection_name}': {e}")
-            raise
+            logger.error(f"❌ Failed to get collection info: {type(e).__name__}")
+            return None
 
 # Singleton instance for application-wide use
 qdrant_vector_db = QdrantVectorDB()

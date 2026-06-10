@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from typing import AsyncGenerator
 from pathlib import Path
 from dotenv import load_dotenv
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -110,6 +111,7 @@ async def get_postgres_db() -> AsyncGenerator[AsyncSession, None]:
     """
     async with postgres_con.SessionLocal() as session:
         try:
+            await session.execute(text("SET search_path TO public, analytics"))
             yield session
             await session.commit()
         except Exception:

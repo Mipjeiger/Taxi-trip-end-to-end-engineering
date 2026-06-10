@@ -1,3 +1,15 @@
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false" # Disable parallelism warning from Hugging Face tokenizers
+
+# Suppress HuggingFace warnings
+import warnings
+warnings.filterwarnings("ignore", message=".*unauthenticated requests.*")
+warnings.filterwarnings("ignore", message=".*HF_TOKEN.*")
+
+# Or set a dummy token (doesn't need to be real)
+#os.environ["HF_TOKEN"] = "dummy_token_for_rate_limits"
+
+
 import logging
 import time
 import uuid
@@ -15,6 +27,7 @@ from datetime import datetime
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
 from app.services.trip_retriever import TripRetriever
+from app.models.trip import Trip
 
 
 router = APIRouter()
@@ -113,13 +126,35 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
                 break
 
         # Cleanup locations (remove extra words)
+        if pickup:
+            pickup = re.sub(r'^(from|dari|go|pergi)\s+', '', pickup, flags=re.IGNORECASE)
+            pickup = pickup.strip()
+        
+        if dropoff:
+            dropoff = dropoff.strip()
+
+        # ============================================================
+        # Test Database connection
+        # ============================================================
+        connection_test = await TripRetriever.test_connection(db)
+        logger.info(f"✅ Database connection test: {connection_test}")
+
+        if not connection_test.get("connected"):
+            logger.error("❌ Database connection failed")
+            return {
+                "session_id": session_id,
+                "response": "I'm having trouble connecting to the database. Please try again later.",
+                "metadata": {"error": "Database connection failed"}
+            }
 
         # ============================================================
         # STEP 2: Retrieve REAL trip data from PostgreSQL
         # ============================================================
         real_trips = []
 
+        # If no trips found, try case-insensitive and partial matching
         if pickup and dropoff:
+            logger.info(f"🔍 No exact matches found, trying flexible matching for pickup='{pickup}' and dropoff='{dropoff}'")
             real_trips = await TripRetriever.find_similar_routes(
                 db=db,
                 pickup_keyword=pickup,
@@ -291,7 +326,7 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
                 "real_trips_used": len(real_trips),
                 "hallucination_blocked": len(detected_hallucinations) > 0,
                 "pickup_extracted": pickup,
-                "dropoff_extracted": drop
+                "dropoff_extracted": dropoff
             }
         }
     
@@ -302,8 +337,7 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
 @router.post("/recommend-route")
 async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredictor = Depends(get_ml_predictor)):
     """Get route recommendation from natural language query."""
-    llm = LLMService()
-    recommendation = await llm.recommend_routes(request.query, request.context)
+    recommendation = await llm_service.recommend_route(request.query, request.context)
 
     # If we got structured data, optionally copute real ETA/price using ML
     if "pickup" in recommendation and "drop" in recommendation:

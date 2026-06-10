@@ -10,6 +10,7 @@ from .prediction import (
     DriverStatus,
     RideBookRequest
 )
+from .trip import Trip
 
 __all__ = [
     "Ride",
@@ -21,5 +22,6 @@ __all__ = [
     "BookingStatus",
     "VehicleArrivalStatus",
     "DriverStatus",
-    "RideBookRequest"
+    "RideBookRequest",
+    "Trip", 
 ]

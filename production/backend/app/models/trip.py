@@ -1,34 +1,28 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text
+from sqlalchemy import Column, String, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
-from datetime import datetime
-from typing import Optional, Dict, Any
 
 Base = declarative_base()
 
 class Trip(Base):
-    """Model for sql table (analytics.trip)"""
     __tablename__ = "trip"
-    __table_args__ = {'schema': 'analytics', 'extend_existing': True}
-
-    ride_id: str = Column(String, primary_key=True, index=True)
-    rider_id: str = Column(String)
-    driver_status: str = Column(String)
-    pickup_location: str = Column(String)
-    dropoff_location: str = Column(String)
-    pickup_lat: float = Column(Float)
-    pickup_lng: float = Column(Float)
-    dropoff_lat: float = Column(Float)
-    dropoff_lng: float = Column(Float)
-    status: str = Column(String)
-    ride_type: str = Column(String)
-    estimated_fare: float = Column(Float)
-    actual_fare: float = Column(Float)
-    distance_km: float = Column(Float)
-    duration_minutes: float = Column(Float)
-    driver_rating: float = Column(Float)
-    booking_status: str = Column(String)
-    created_at: datetime = Column(DateTime)
-    completed_at: Optional[datetime] = Column(DateTime, nullable=True)
-
-    def __repr__(self):
-        return f"<Trip(ride_id={self.ride_id}, pickup={self.pickup_location}, dropoff={self.dropoff_location})>"
+    __table_args__ = {"schema": "analytics"}
+    
+    ride_id = Column(String, primary_key=True)
+    rider_id = Column(String)
+    driver_status = Column(String)
+    pickup_location = Column(String)
+    dropoff_location = Column(String)
+    pickup_lat = Column(Float)
+    pickup_lng = Column(Float)
+    dropoff_lat = Column(Float)
+    dropoff_lng = Column(Float)
+    status = Column(String)
+    ride_type = Column(String)
+    estimated_fare = Column(Float)
+    actual_fare = Column(Float)
+    distance_km = Column(Float)
+    duration_minutes = Column(Float)
+    driver_rating = Column(Float)
+    booking_status = Column(String)
+    created_at = Column(DateTime)
+    completed_at = Column(DateTime)

@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "llama-3.1-8b-instant"
     LLM_BASE_URL: Optional[str] = None 
 
+    # Qdrant Configuration
+    QDRANT_URL: Optional[str] = None
+    QDRANT_API_KEY: Optional[str] = None
+    
+
     # ---- File paths -----
     # These were module-level variables before — now proper Settings fields
     PARQUET_PATH: str = str(BASE_DIR / 'backend' / 'database' / 'taxi_trip_engineering_2.parquet')

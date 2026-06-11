@@ -207,15 +207,13 @@ services:
   metabase:
     image: metabase/metabase:latest
     container_name: metabase
-    deploy:
-      resources:
-        limits:
-          memory: 1G
+    mem_limit: 1g
     ports:
       - "4001:3000"   
     volumes:
       - metabase_data:/metabase-data
     environment:
+      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx1024m"
       MB_DB_TYPE: postgres
       MB_DB_DBNAME: ${POSTGRES_DB}
       MB_DB_USER: ${POSTGRES_USER}

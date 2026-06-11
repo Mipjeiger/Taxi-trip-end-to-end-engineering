@@ -1,14 +1,10 @@
 import os
-os.environ["TOKENIZERS_PARALLELISM"] = "false" # Disable parallelism warning from Hugging Face tokenizers
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Suppress HuggingFace warnings
 import warnings
 warnings.filterwarnings("ignore", message=".*unauthenticated requests.*")
 warnings.filterwarnings("ignore", message=".*HF_TOKEN.*")
-
-# Or set a dummy token (doesn't need to be real)
-#os.environ["HF_TOKEN"] = "dummy_token_for_rate_limits"
-
 
 import logging
 import time
@@ -30,12 +26,11 @@ from app.api.dependencies import get_ml_predictor
 from app.services.trip_retriever import TripRetriever
 from app.models.trip import Trip
 
-
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # ================================================================
-# Lazy-loaded embedding model (loads once, reused across requests)
+# Lazy-loaded embedding model
 # ================================================================
 _embedding_model = None
 
@@ -57,10 +52,10 @@ def embed_text(text: str) -> Optional[List[float]]:
         model = get_embedding_model()
         if model is None:
             return None
-        vectors = list(model.embed([text])) # returns generator, convert to list
+        vectors = list(model.embed([text]))
         return vectors[0].tolist()
     except Exception as e:
-        logger.error(f"❌ Embedding generation failed for text: {text[:50]}... Error: {e}")
+        logger.error(f"❌ Embedding generation failed: {e}")
         return None
 
 # ================================================================
@@ -74,9 +69,9 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
-    messages: List[Message] = List[Message]
+    messages: List[Message]
     temperature: float = Field(default=0.7, ge=0, le=2)
-    context: Optional[Dict] = None # Optional context for the LLM to consider in the conversation
+    context: Optional[Dict] = None
 
 class RouteRecommendRequest(BaseModel):
     query: str
@@ -95,7 +90,7 @@ class PriceQuestionRequest(BaseModel):
 # ===============================================================
 
 @router.post("/chat")
-async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_postgres_db)):
+async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_postgres_db)):
     """Generate Chat endpoint with LLM, Qdrant vector search, and Evidently monitoring."""
     start_time = time.time()
     session_id = request.session_id or str(uuid.uuid4())
@@ -109,153 +104,136 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
         pickup = None
         dropoff = None
 
-        # Multiple pattern to handle different user phrasings
-        patterns = [
-            r"(?:from|dari)\s+([^t]+?)\s+(?:to|ke|menuju)\s+([^?\.]+)",
-            r"(?:between|antara)\s+([^a]+?)\s+(?:and|dan)\s+([^?\.]+)",
-            r"(?:go|pergi)\s+(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)",
-            r"([^?\.]+?)\s+(?:to|ke)\s+([^?\.]+)",
-        ]
+        # Pattern 1: "from X to Y" or "dari X ke Y"
+        pattern = r"(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)"
+        match = re.search(pattern, user_message, re.IGNORECASE)
 
-        for pattern in patterns:
-            match = re.search(pattern, user_message, re.IGNORECASE)
-            if match:
-                pickup = match.group(1).strip()
-                dropoff = match.group(2).strip()
-                logger.info(f"📍 Extracted locations - Pickup: '{pickup}', Dropoff: '{dropoff}'")
-                
-                break
+        if match:
+            pickup = match.group(1).strip()
+            dropoff = match.group(2).strip()
+        else:
+            # Pattern 2: "X to Y"
+            pattern2 = r"([^?\.]+?)\s+(?:to|ke)\s+([^?\.]+)"
+            match2 = re.search(pattern2, user_message, re.IGNORECASE)
+            if match2:
+                pickup = match2.group(1).strip()
+                dropoff = match2.group(2).strip()
 
-        # Cleanup locations (remove extra words)
-        if pickup:
-            pickup = re.sub(r'^(from|dari|go|pergi)\s+', '', pickup, flags=re.IGNORECASE)
-            pickup = pickup.strip()
-        
-        if dropoff:
-            dropoff = dropoff.strip()
+        logger.info(f"📍 Extracted locations: pickup='{pickup}', dropoff='{dropoff}'")
 
         # ============================================================
-        # Test Database connection
+        # STEP 2: Test Database connection (handle both dict and bool)
         # ============================================================
-        connection_test = await TripRetriever.test_connection(db)
-        logger.info(f"✅ Database connection test: {connection_test}")
-
-        if not connection_test.get("connected"):
-            logger.error("❌ Database connection failed")
-            return {
-                "session_id": session_id,
-                "response": "I'm having trouble connecting to the database. Please try again later.",
-                "metadata": {"error": "Database connection failed"}
-            }
+        try:
+            connection_test = await TripRetriever.test_connection(db)
+            
+            # Handle both return types (dict or bool)
+            is_connected = False
+            if isinstance(connection_test, dict):
+                is_connected = connection_test.get("connected", False)
+            else:
+                is_connected = connection_test
+            
+            if not is_connected:
+                logger.error("❌ Database connection failed")
+                return {
+                    "session_id": session_id,
+                    "response": "I'm having trouble connecting to the database. Please try again later.",
+                    "metadata": {"error": "Database connection failed"}
+                }
+        except Exception as e:
+            logger.error(f"Database test failed: {e}")
+            # Continue anyway - the main query will fail if not connected
 
         # ============================================================
-        # STEP 2: Retrieve REAL trip data from PostgreSQL
+        # STEP 3: Retrieve REAL trip data from PostgreSQL
         # ============================================================
         real_trips = []
-
-        # If no trips found, try case-insensitive and partial matching
         if pickup and dropoff:
-            logger.info(f"🔍 No exact matches found, trying flexible matching for pickup='{pickup}' and dropoff='{dropoff}'")
             real_trips = await TripRetriever.find_similar_routes(
                 db=db,
                 pickup_keyword=pickup,
                 dropoff_keyword=dropoff,
                 limit=5
             )
-            logger.info(f"🔍 Retrieved {len(real_trips)} real trips from DB for pickup='{pickup}' and dropoff='{dropoff}'")
+            logger.info(f"🔍 Retrieved {len(real_trips)} real trips from DB for '{pickup}' → '{dropoff}'")
 
         # ============================================================
-        # STEP 3: Build context message with REAL data
+        # STEP 4: Build response based on real data
         # ============================================================
-        context_message = None
-
         if real_trips:
-            # Format real trip data gracefully
-            trip_options = []
-            for trip in real_trips:
-                option = f"• {trip['vehicle_type']}:"
-                if trip['avg_duration_min']:
-                    option += f"~{trip['avg_duration_min']} minutes,"
-                if trip['avg_distance_km']:
-                    option += f"~{trip['avg_distance_km']} km,"
-                if trip['avg_actual_fare']:
-                    option += f"~Rp{trip['avg_actual_fare']:,}, "
-                option += f"based on {trip['trip_count']} historical trips"
-                if trip['avg_driver_rating']:
-                    option += f" (⭐ {trip['avg_driver_rating']}/5 rating)"
-                trip_options.append(option)
-
-            context_content = f"""
-            ═══════════════════════════════════════════════════════════
-            REAL TRIP DATA from database for {pickup} -> {dropoff}:
-            ═══════════════════════════════════════════════════════════
-
-            {chr(10).join(trip_options)}
-
-            ═══════════════════════════════════════════════════════════
-            INSTRUCTIONS:
-            1. ONLY use the vehicle types listed above (do not invent others)
-            2. Present the actual numbers exactly as shown
-            3. Ask user which vehicle they prefer
-            4. Do NOT suggest public transportation (bus, train, grab, gojek, etc.)
-            """
-
-            context_message = {"role": "system", "content": context_content}
-        else:
-            context_content = f"""
-            ═══════════════════════════════════════════════════════════
-            NO HISTORICAL TRIP DATA FOUND in database for {pickup} -> {dropoff}.
-            ═══════════════════════════════════════════════════════════
+            # Build response with real data
+            response_text = f"✅ Found {len(real_trips)} vehicle options from {pickup} to {dropoff}:\n\n"
+            for i, trip in enumerate(real_trips, 1):
+                response_text += f"{i}. **{trip['vehicle_type']}**: "
+                if trip.get('avg_duration_min'):
+                    response_text += f"~{trip['avg_duration_min']} minutes, "
+                if trip.get('avg_distance_km'):
+                    response_text += f"{trip['avg_distance_km']} km, "
+                if trip.get('avg_actual_fare'):
+                    response_text += f"~Rp{trip['avg_actual_fare']:,}, "
+                response_text += f"based on {trip['trip_count']} completed trip"
+                if trip['trip_count'] > 1:
+                    response_text += "s"
+                if trip.get('avg_driver_rating'):
+                    response_text += f" (driver rating: {trip['avg_driver_rating']}⭐)"
+                response_text += "\n"
+            response_text += "\nWhich vehicle would you like to book?"
             
-            Route searched: {pickup if pickup else "unknown"} -> {dropoff if dropoff else "unknown"}
-
-            INSTRUCTIONS:
-            1. Tell user: "I don't have historical trip data for '{pickup} to {dropoff}'"
-            2. Ask user to try different locations or check spelling
-            3. DO NOT invent routes, times, or prices from your knowledge
-            4. DO NOT suggest public transportation (bus, train, grab, gojek, etc.)
-            ═══════════════════════════════════════════════════════════
-            """
-
-            context_message = {"role": "system", "content": context_content}
+            # Use this as the final response
+            final_response = response_text
+            
+        else:
+            # No trips found - provide helpful message
+            final_response = f"I couldn't find any trips from '{pickup}' to '{dropoff}' in our database.\n\n"
+            final_response += "Here are some popular routes we have data for:\n"
+            
+            # Get sample routes for suggestions
+            all_routes = await TripRetriever.get_all_routes(db)
+            if all_routes:
+                unique_routes = {}
+                for route in all_routes[:5]:
+                    key = f"{route['pickup']} → {route['dropoff']}"
+                    if key not in unique_routes:
+                        unique_routes[key] = route['vehicle']
+                        final_response += f"• {key} ({route['vehicle']})\n"
+            
+            final_response += "\nCould you try one of these routes or check your spelling?"
 
         # ============================================================
-        # STEP 4: Build final messages for LLM
+        # STEP 5: Build context message for LLM (if we want LLM enhancement)
         # ============================================================
-        # Start with context message (highest priority)
-        messages = [context_message]
-
-        # Add original conversation history
-        for msg in request.messages:
-            messages.append(msg.model_dump())
-
-        # Add optional Qdrant context if available (lower priority than real DB data)
-        query_vector = embed_text(user_message)
-
-        try:
-            if query_vector:
-                qdrant_vector_db.create_collection("chat_history", vector_size=384)
-                context_results = qdrant_vector_db.search_vector(
-                    collection_name="chat_history",
-                    query_vector=query_vector,
-                    limit=3
-                )
-                logger.info(f"🔍 Retrieved {len(context_results)} context results from Qdrant")
+        # Note: You can skip LLM entirely when we have real data
+        # Or use LLM to enhance the response
         
-        except Exception as e:
-            logger.warning(f"❌ Failed to retrieve context from Qdrant: {e}")
-            context_results = []
-
-        # ============================================================
-        # STEP 5: Call LLM with strict temperature
-        # ============================================================
-        logger.info(f"💬 Sending to LLM with real trip data: {len(real_trips)} options")
-        response = await llm_service.chat(
-            messages=messages,
-            temperature=0.3, # Lower temperature = less hallucination, more reliance on provided data
-            user_id=request.user_id,
-            session_id=session_id
-        )
+        if real_trips:
+            # Use LLM to polish the response (optional)
+            context_message = {
+                "role": "system",
+                "content": f"""
+                You are a helpful taxi assistant. Based on this real data:
+                {final_response}
+                
+                Present this information in a friendly, natural way. 
+                Do not add any information not in the data above.
+                Do not suggest public transportation.
+                """
+            }
+            
+            messages = [context_message]
+            for msg in request.messages:
+                messages.append(msg.model_dump())
+            
+            # Call LLM for natural language polish
+            response = await llm_service.chat(
+                messages=messages,
+                temperature=0.3,
+                user_id=request.user_id,
+                session_id=session_id
+            )
+        else:
+            # No real data, use direct response without LLM
+            response = final_response
 
         # ============================================================
         # STEP 6: Validate response (anti-hallucination checks)
@@ -265,22 +243,21 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
         detected_hallucinations = [kw for kw in hallucination_keywords if kw in response.lower()]
         
         if detected_hallucinations and not real_trips:
-            logger.warning(f"⚠️ Hallucination detected in LLM response: {detected_hallucinations}")
-            response = "I apologize, but I don't have real taxi data for that route. Could you please specify different pickup or dropoff" \
-            "locations? I can only provide information based on our actual trip history data."
+            logger.warning(f"⚠️ Hallucination detected: {detected_hallucinations}")
+            response = "I apologize, but I don't have real taxi data for that route. Could you please specify different pickup or dropoff locations?"
 
         # ============================================================
-        # STEP 7: Store in Qdrant
+        # STEP 7: Store in Qdrant (optional, don't fail if it errors)
         # ============================================================
         response_time_ms = int((time.time() - start_time) * 1000)
         tokens_estimate = len(user_message.split()) + len(response.split())
-        cost_estimate = (tokens_estimate / 1000) * 0.0001 # Estimated cost estimation
+        cost_estimate = (tokens_estimate / 1000) * 0.0001
 
+        query_vector = embed_text(user_message)
         if query_vector:
             try:
+                qdrant_vector_db.create_collection("chat_history", vector_size=384)
                 point_id = abs(hash(session_id + user_message)) % (10**9)
-                
-                # Qdrant store add point with metadata for monitoring
                 qdrant_vector_db.add_point(
                     collection_name="chat_history",
                     point_id=str(point_id),
@@ -295,21 +272,24 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
                     }
                 )
             except Exception as e:
-                logger.warning(f"❌ Failed to store in Qdrant: {e}")
+                logger.warning(f"⚠️ Failed to store in Qdrant: {e}")
 
         # ============================================================
-        # STEP 8: Log to Evidently to monitor for future analysis
+        # STEP 8: Log to Evidently
         # ============================================================
-        await evidently_monitor.log_llm_response(
-            db=db,
-            user_id=request.user_id,
-            session_id=session_id,
-            prompt=user_message,
-            response=response,
-            response_time_ms=response_time_ms,
-            tokens_used=tokens_estimate,
-            cost=cost_estimate,
-        )
+        try:
+            await evidently_monitor.log_llm_response(
+                db=db,
+                user_id=request.user_id,
+                session_id=session_id,
+                prompt=user_message,
+                response=response,
+                response_time_ms=response_time_ms,
+                tokens_used=tokens_estimate,
+                cost=cost_estimate,
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to log to Evidently: {e}")
 
         return {
             "session_id": session_id,
@@ -329,12 +309,16 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
         logger.error(f"❌ Error in /chat endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
 
+# ===============================================================
+# Other Endpoints
+# ===============================================================
+
 @router.post("/recommend-route")
 async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredictor = Depends(get_ml_predictor)):
     """Get route recommendation from natural language query."""
-    recommendation = await llm_service.recommend_route(request.query, request.context)
+    llm = LLMService()
+    recommendation = await llm.recommend_route(request.query, request.context)
 
-    # If we got structured data, optionally copute real ETA/price using ML
     if "pickup" in recommendation and "drop" in recommendation:
         try:
             pred = await ml_predictor.predict_ride_metrics(
@@ -350,7 +334,7 @@ async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredic
         except Exception as e:
             recommendation["ml_error"] = str(e)
 
-    return recommendation # Return raw recommendation, ML metrics are optional enhancements
+    return recommendation
 
 @router.post("/ask-route")
 async def ask_route(request: RouteQuestionRequest):
@@ -376,14 +360,14 @@ async def test_database(db: AsyncSession = Depends(get_postgres_db)):
         result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip WHERE status = 'Completed'"))
         completed = result.scalar()
 
-        # Get sample routes
         result = await db.execute(text("""
             SELECT pickup_location, dropoff_location, ride_type, COUNT(*) as cnt
             FROM analytics.trip 
             WHERE status = 'Completed'
             GROUP BY pickup_location, dropoff_location, ride_type
-            LIMIT 5
-            """))
+            ORDER BY cnt DESC
+            LIMIT 10
+        """))
         samples = result.fetchall()
 
         return {

@@ -88,3 +88,22 @@ async def test_route(pickup: str, dropoff: str, db: AsyncSession = Depends(get_p
         }
     except Exception as e:
         return {"error": str(e)}
+    
+# Implement TripRetriever for test end point on fuzzy search
+@router.get("/fuzzy-search/{pickup}/{dropoff}")
+async def fuzzy_search(pickup: str, dropoff: str, db: AsyncSession):
+    """Test fuzzy search for routes"""
+    try:
+        retriever = TripRetriever(db)
+        results = await retriever.fuzzy_search_routes(pickup, dropoff)
+    
+        return {
+            "pickup_search": pickup,
+            "dropoff_search": dropoff,
+            "found": len(results) > 0,
+            "routes": results
+        }
+    
+    except Exception as e:
+        logger.error(f"Fuzzy search debug error: {e}", exc_info=True)
+        return {"error": str(e)}

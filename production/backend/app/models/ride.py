@@ -2,6 +2,7 @@ from sqlalchemy import Column, String, Float, DateTime, Integer
 from app.core.database import Base
 from datetime import datetime
 
+"""Supabase integration"""
 class Ride(Base):
     __tablename__ = 'rides'
 

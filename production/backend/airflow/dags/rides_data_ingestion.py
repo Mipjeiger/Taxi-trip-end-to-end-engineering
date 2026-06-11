@@ -339,7 +339,8 @@ def transform_data(**context):
 
         # Log null summary before saving
         key_cols = ["ride_id", "rider_id", "booking_status", "driver_status",
-                    "status", "actual_fare", "distance_km"]
+                    "status", "actual_fare", "distance_km", "day_of_week", "demand_pressure", "hour"]
+        
         null_summary = {c: int(df[c].isna().sum()) for c in key_cols if c in df.columns}
         logger.info(f"Null summary before saving:\n{null_summary}")
 
@@ -393,6 +394,9 @@ def load_to_postgres(**context):
             "driver_rating",
             "created_at",
             "completed_at",
+            "day_of_week",
+            "demand_pressure",
+            "hour"
         ]
 
         # Keep only columns that exist in df and trip schema
@@ -403,13 +407,14 @@ def load_to_postgres(**context):
         float_cols = [
             "pickup_lat", "pickup_lng", "dropoff_lat", "dropoff_lng",
             "actual_fare", "estimated_fare", "distance_km",
-            "duration_minutes", "driver_rating"
+            "duration_minutes", "driver_rating", "demand_pressure"
         ]
 
         # Cast types safely
         for float_col in float_cols:
             if float_col in df_insert.columns:
                 df_insert[float_col] = pd.to_numeric(df_insert[float_col], errors="coerce")
+
 
         for ts_col in ["created_at", "completed_at"]:
             if ts_col in df_insert.columns:

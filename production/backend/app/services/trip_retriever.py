@@ -189,7 +189,8 @@ class TripRetriever:
                     estimated_fare,
                     actual_fare,
                     driver_rating,
-                    completed_at
+                    completed_at,
+                    day_of_week,
                 FROM analytics.trip
                 WHERE status = 'Completed'
                     AND LOWER(pickup_location) LIKE LOWER(CONCAT('%', :pickup, '%'))
@@ -219,7 +220,8 @@ class TripRetriever:
                     "estimated_fare": float(row[6]) if row[6] else None,
                     "actual_fare": float(row[7]) if row[7] else None,
                     "rating": float(row[8]) if row[8] else None,
-                    "date": row[9].isoformat() if row[9] else None
+                    "date": row[9].isoformat() if row[9] else None,
+                    "day_of_week": row[10] if row[10] else None
                 }
                 for row in rows
             ]
@@ -278,4 +280,29 @@ class TripRetriever:
 
         except Exception as e:
             logger.error(f"❌ Failed to retrieve routes: {e}", exc_info=True)
+            return []
+        
+    @staticmethod
+    async def debug_direct_query(db: AsyncSession, pickup: str, dropoff: str):
+        """Direct SQL query to debug why data isn't found"""
+        try:
+            query = text("""
+                SELECT ride_type, pickup_location, dropoff_location, actual_fare, duration_minutes
+                FROM analytics.trip
+                WHERE status = 'Completed'
+                AND pickup_location ILIKE '%{pickup}%'
+                AND dropoff_location ILIKE '%{dropoff}%'
+                LIMIT 5
+            """)
+            result = await db.execute(query)
+            rows = result.fetchall()
+            logger.info(f"🔍 Direct query results for {pickup} → {dropoff}:")
+
+            for row in rows:
+                logger.info(f" - {row[0]}: {row[1]} → {row[2]}, fare: {row[3]}, duration: {row[4]} min")
+
+            return rows
+        
+        except Exception as e:
+            logger.error(f"❌ Direct query failed: {e}", exc_info=True)
             return []

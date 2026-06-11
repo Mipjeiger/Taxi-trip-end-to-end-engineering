@@ -26,6 +26,11 @@ ALTER TABLE analytics.trip ADD COLUMN booking_status VARCHAR; -- included bookin
 
 ALTER TABLE analytics.trip ADD COLUMN driver_status VARCHAR; -- included driver_status column
 ALTER TABLE analytics.trip DROP COLUMN driver_id; -- drop existing driver_id column
+
+-- add table column for day_of_week, demand_pressure, hour
+ALTER TABLE analytics.trip ADD COLUMN day_of_week INTEGER;
+ALTER TABLE analytics.trip ADD COLUMN demand_pressure DOUBLE PRECISION;
+ALTER TABLE analytics.trip ADD COLUMN hour INTEGER;
 CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id          VARCHAR PRIMARY KEY,
     rider_id         VARCHAR NOT NULL,

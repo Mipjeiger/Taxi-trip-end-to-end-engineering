@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime
+from sqlalchemy import Column, String, Float, DateTime, Integer
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -26,3 +26,6 @@ class Trip(Base):
     booking_status = Column(String)
     created_at = Column(DateTime)
     completed_at = Column(DateTime)
+    day_of_week = Column(Integer)
+    demand_pressure = Column(Float)
+    hour = Column(Integer)

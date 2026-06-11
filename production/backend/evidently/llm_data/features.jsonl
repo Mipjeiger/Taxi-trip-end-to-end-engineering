@@ -15,3 +15,5 @@
 {"timestamp":"2026-06-10T12:30:12.740829","prompt_length":8,"response_length":16,"response_time_ms":1348.6857414245605,"tokens_used":543,"sentiment":"neutral","entity_count":3,"complexity_score":0.206}
 {"timestamp":"2026-06-10T13:47:56.897634","prompt_length":22,"response_length":34,"response_time_ms":1025.4778861999512,"tokens_used":425,"sentiment":"neutral","entity_count":4,"complexity_score":0.404}
 {"timestamp":"2026-06-10T13:58:53.891847","prompt_length":9,"response_length":16,"response_time_ms":954.1280269622803,"tokens_used":544,"sentiment":"neutral","entity_count":3,"complexity_score":0.206}
+{"timestamp":"2026-06-10T15:08:03.171971","prompt_length":7,"response_length":16,"response_time_ms":760.3821754455566,"tokens_used":542,"sentiment":"neutral","entity_count":3,"complexity_score":0.206}
+{"timestamp":"2026-06-10T15:49:16.453474","prompt_length":7,"response_length":16,"response_time_ms":701.453447341919,"tokens_used":542,"sentiment":"neutral","entity_count":3,"complexity_score":0.206}

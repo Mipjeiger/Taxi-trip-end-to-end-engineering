@@ -1,14 +1,13 @@
 import logging
-from sqlalchemy import text, select, func, and_
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional, Dict
-from app.models.trip import Trip
+from typing import List, Dict, Optional
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class TripRetriever:
-    """Retrieve real trip data from sql table (analytics.trip) to ground LLM responses"""
-
+    
     @staticmethod
     async def find_similar_routes(
         db: AsyncSession,
@@ -16,28 +15,29 @@ class TripRetriever:
         dropoff_keyword: str,
         limit: int = 5
     ) -> List[Dict]:
-        """Find real trips with similar pickup/dropoff locations.
-        Returns aggregated statistics per vehicle type.
-        """
+        """Find real trips using raw SQL for reliability"""
         try:
-            # User raw SQL to ensure schema is correct
+            logger.info(f"🔍 Searching for trips from '{pickup_keyword}' to '{dropoff_keyword}'")
+            
+            # Use raw SQL with explicit analytics schema
             query = text("""
-                SELECT
+                SELECT 
                     ride_type,
-                    AVG(duration_minutes) as avg_duration_min,
-                    AVG(distance_km) as avg_distance_km,
-                    AVG(estimated_fare) as avg_estimated_fare,
-                    AVG(actual_fare) as avg_actual_fare,
-                    AVG(driver_rating) as avg_driver_rating,
+                    ROUND(AVG(duration_minutes), 1) as avg_duration_min,
+                    ROUND(AVG(distance_km), 1) as avg_distance_km,
+                    ROUND(AVG(estimated_fare)) as avg_estimated_fare,
+                    ROUND(AVG(actual_fare)) as avg_actual_fare,
+                    ROUND(AVG(driver_rating), 1) as avg_driver_rating,
                     COUNT(*) as trip_count
                 FROM analytics.trip
                 WHERE status = 'Completed'
                     AND pickup_location ILIKE :pickup_pattern
                     AND dropoff_location ILIKE :dropoff_pattern
                 GROUP BY ride_type
+                ORDER BY trip_count DESC
                 LIMIT :limit
             """)
-
+            
             result = await db.execute(
                 query,
                 {
@@ -47,27 +47,26 @@ class TripRetriever:
                 }
             )
             rows = result.fetchall()
-
+            
             if rows:
                 logger.info(f"✅ Found {len(rows)} vehicle types for {pickup_keyword} → {dropoff_keyword}")
                 trips_data = []
                 for row in rows:
                     trips_data.append({
                         "vehicle_type": row[0],
-                        "avg_duration_min": round(row[1], 1) if row[1] else None,
-                        "avg_distance_km": round(row[2], 1) if row[2] else None,
-                        "avg_estimated_fare": int(row[3]) if row[3] else None,
-                        "avg_actual_fare": int(row[4]) if row[4] else None,
-                        "avg_driver_rating": round(row[5], 1) if row[5] else None,
+                        "avg_duration_min": row[1],
+                        "avg_distance_km": row[2],
+                        "avg_estimated_fare": row[3],
+                        "avg_actual_fare": row[4],
+                        "avg_driver_rating": row[5],
                         "trip_count": row[6]
                     })
-
                 return trips_data
             
-            # If no results, try broader search with fuzzy matching using SQLAlchemy ORM
-            logger.warning(f"⚠️ No exact matches found for '{pickup_keyword}' → '{dropoff_keyword}', trying broader search...")
-
-            # Get all available routes for debugging
+            # No results found - log available routes for debugging
+            logger.warning(f"⚠️ No trips found for {pickup_keyword} → {dropoff_keyword}")
+            
+            # Get sample of what's available
             sample_query = text("""
                 SELECT DISTINCT pickup_location, dropoff_location, ride_type 
                 FROM analytics.trip 
@@ -75,58 +74,18 @@ class TripRetriever:
                 LIMIT 10
             """)
             sample_result = await db.execute(sample_query)
-            sample_rows = sample_result.fetchall()
+            samples = sample_result.fetchall()
             
-            if sample_rows:
-                logger.info("📋 Available routes in database:")
-                for row in sample_rows:
-                    logger.info(f"   - {row[0]} → {row[1]} ({row[2]})")
+            logger.info("📋 Example routes available in database:")
+            for sample in samples[:5]:
+                logger.info(f"   - '{sample[0]}' → '{sample[1]}' ({sample[2]})")
             
             return []
-        
+            
         except Exception as e:
-            logger.error(f"❌ Error retrieving similar trips: {e}", exc_info=True)
+            logger.error(f"❌ Failed to retrieve trips: {e}", exc_info=True)
             return []
     
-    @staticmethod
-    async def test_connection(db: AsyncSession) -> Dict:
-        """Test database connection and return stats"""
-        try:
-            result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip"))
-            count = result.scalar()
-            
-            result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip WHERE status = 'Completed'"))
-            completed = result.scalar()
-
-            return {
-                "connected": True,
-                "total_trips": count,
-                "completed_trips": completed,
-                "message": f"Successfully connected to database. Total trips: {count}, Completed trips: {completed}"
-            }
-        
-        except Exception as e:
-            logger.error(f"❌ Database connection test failed: {e}", exc_info=True)
-            return {
-                "connected": False,
-                "total_trips": None,
-                "completed_trips": None,
-                "message": f"Database connection failed: {e}"
-            }
-
-    @staticmethod
-    async def get_all_available_locations(db: AsyncSession) -> List[str]:
-        """Get list of all unique pickup locations for suggestion"""
-        try:
-            stmt = select(Trip.pickup_location.distinct()).where(Trip.status == "Completed").limit(50)
-            result = await db.execute(stmt)
-            locations = [row[0] for row in result.fetchall() if row[0]]
-            return locations
-        
-        except Exception as e:
-            logger.error(f"❌ Error retrieving available locations: {e}", exc_info=True)
-            return []
-
     @staticmethod
     async def search_by_location_fuzzy(
         db: AsyncSession,
@@ -134,44 +93,110 @@ class TripRetriever:
         dropoff_keyword: str,
         limit: int = 10
     ) -> List[Dict]:
-        """Get individual trip examples for more detailed context using fuzzy search on pickup/dropoff locations."""
+        """Get individual trip examples"""
         try:
-            stmt = select(
-                Trip.ride_id,
-                Trip.ride_type,
-                Trip.pickup_location,
-                Trip.dropoff_location,
-                Trip.duration_minutes,
-                Trip.distance_km,
-                Trip.estimated_fare,
-                Trip.actual_fare,
-                Trip.driver_rating,
-                Trip.completed_at
-            ).where(
-                and_(
-                    Trip.status == "Completed",  # ← Changed from "completed" to "Completed"
-                    func.lower(Trip.pickup_location).contains(pickup_keyword.lower()),
-                    func.lower(Trip.dropoff_location).contains(dropoff_keyword.lower())
-                )
-            ).limit(limit)
-
-            result = await db.execute(stmt)
-            rows = result.all()
-
+            query = text("""
+                SELECT 
+                    ride_id,
+                    ride_type,
+                    pickup_location,
+                    dropoff_location,
+                    duration_minutes,
+                    distance_km,
+                    estimated_fare,
+                    actual_fare,
+                    driver_rating,
+                    completed_at
+                FROM analytics.trip
+                WHERE status = 'Completed'
+                    AND pickup_location ILIKE :pickup_pattern
+                    AND dropoff_location ILIKE :dropoff_pattern
+                ORDER BY completed_at DESC
+                LIMIT :limit
+            """)
+            
+            result = await db.execute(
+                query,
+                {
+                    "pickup_pattern": f"%{pickup_keyword}%",
+                    "dropoff_pattern": f"%{dropoff_keyword}%",
+                    "limit": limit
+                }
+            )
+            rows = result.fetchall()
+            
             return [
                 {
-                    "ride_id": row.ride_id,
-                    "vehicle_type": row.ride_type,
-                    "pickup": row.pickup_location,
-                    "dropoff": row.dropoff_location,
-                    "duration_min": row.duration_minutes,
-                    "distance_km": row.distance_km,
-                    "fare": row.actual_fare or row.estimated_fare,
-                    "rating": row.driver_rating,
-                    "date": row.completed_at.isoformat() if row.completed_at else None
+                    "ride_id": row[0],
+                    "vehicle_type": row[1],
+                    "pickup": row[2],
+                    "dropoff": row[3],
+                    "duration_min": float(row[4]) if row[4] else None,
+                    "distance_km": float(row[5]) if row[5] else None,
+                    "estimated_fare": float(row[6]) if row[6] else None,
+                    "actual_fare": float(row[7]) if row[7] else None,
+                    "rating": float(row[8]) if row[8] else None,
+                    "date": row[9].isoformat() if row[9] else None
                 }
                 for row in rows
             ]
         except Exception as e:
-            logger.error(f"❌ Error retrieving trip examples: {e}", exc_info=True)
+            logger.error(f"❌ Fuzzy search failed: {e}")
+            return []
+        
+    @staticmethod
+    async def test_connection(db: AsyncSession) -> Dict:
+        """Test dababase connection and schema access"""
+        try:
+            result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip"))
+            count = result.scalar()
+
+            result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip WHERE status = 'Completed'"))
+            completed = result.scalar()
+
+            return {
+                "connected": True,
+                "total_trips": count,
+                "completed_trips": completed,
+                "message": f"Successfully accessed analytics.trip - total: {count}, completed: {completed}"
+            }
+        
+        except Exception as e:
+            logger.error(f"❌ Database connection test failed: {e}", exc_info=True)
+            return {
+                "connected": False,
+                "error": str(e)
+            }
+
+    @staticmethod
+    async def get_popular_routes(db: AsyncSession, limit: int = 10) -> List[Dict]:
+        """Get most popular routes for suggestions"""
+        try:
+            query = text("""
+                SELECT 
+                    pickup_location,
+                    dropoff_location,
+                    COUNT(*) as trip_count,
+                    AVG(actual_fare) as avg_fare
+                FROM analytics.trip
+                WHERE status = 'Completed'
+                GROUP BY pickup_location, dropoff_location
+                ORDER BY trip_count DESC
+                LIMIT :limit
+            """)
+            
+            result = await db.execute(query, {"limit": limit})
+            rows = result.fetchall()
+            
+            return [
+                {
+                    "pickup": row[0],
+                    "dropoff": row[1],
+                    "trip_count": row[2],
+                    "avg_fare": round(row[3], 0) if row[3] else None
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get popular routes: {e}")
             return []

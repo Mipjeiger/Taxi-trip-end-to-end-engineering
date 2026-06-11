@@ -17,6 +17,7 @@ import json
 import re
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from app.core.postgres_db import get_postgres_db
 from app.core.qdrant_client import qdrant_vector_db
 from app.core.evidently_monitor import evidently_monitor
@@ -231,25 +232,19 @@ async def chat_endpoint(request: ChatRequest , db: AsyncSession = Depends(get_po
         # Add optional Qdrant context if available (lower priority than real DB data)
         query_vector = embed_text(user_message)
 
-        if query_vector:
-            try:
+        try:
+            if query_vector:
                 qdrant_vector_db.create_collection("chat_history", vector_size=384)
                 context_results = qdrant_vector_db.search_vector(
                     collection_name="chat_history",
                     query_vector=query_vector,
                     limit=3
                 )
-                if context_results:
-                    past_context = "\n".join([
-                        f"- {r['metadata'].get('prompt', '?')[:100]}"
-                        for r in context_results
-                    ])
-                    messages.append({
-                        "role": "system",
-                        "content": f"Past conversation context:\n{past_context}\n(Use this conversation flow, but prioritize REAL TRIP DATA above)"
-                    })
-            except Exception as e:
-                logger.warning(f"❌ Qdrant search failed: {e}")
+                logger.info(f"🔍 Retrieved {len(context_results)} context results from Qdrant")
+        
+        except Exception as e:
+            logger.warning(f"❌ Failed to retrieve context from Qdrant: {e}")
+            context_results = []
 
         # ============================================================
         # STEP 5: Call LLM with strict temperature
@@ -370,3 +365,42 @@ async def ask_price(request: PriceQuestionRequest):
     llm = LLMService()
     answer = await llm.answer_price_question(request.question, request.price_context)
     return {"answer": answer}
+
+@router.get("/db-test")
+async def test_database(db: AsyncSession = Depends(get_postgres_db)):
+    """Test database connection and return sample data."""
+    try:
+        result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip"))
+        total = result.scalar()
+
+        result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip WHERE status = 'Completed'"))
+        completed = result.scalar()
+
+        # Get sample routes
+        result = await db.execute(text("""
+            SELECT pickup_location, dropoff_location, ride_type, COUNT(*) as cnt
+            FROM analytics.trip 
+            WHERE status = 'Completed'
+            GROUP BY pickup_location, dropoff_location, ride_type
+            LIMIT 5
+            """))
+        samples = result.fetchall()
+
+        return {
+            "status": "connected",
+            "total_trips": total,
+            "completed_trips": completed,
+            "sample_routes": [
+                {
+                    "pickup": s[0],
+                    "dropoff": s[1],
+                    "vehicle": s[2],
+                    "count": s[3]
+                } 
+                for s in samples
+            ]
+        }
+    
+    except Exception as e:
+        logger.error(f"Database test error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

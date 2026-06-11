@@ -45,25 +45,31 @@ class QdrantVectorDB:
     def _initialize_client(self):
         """Initialize Qdrant client connection"""
         try:
-            if not settings.QDRANT_URL or not settings.QDRANT_URL.strip():
-                logger.error("❌ QDRANT_URL is not set in environment variables.")
-                self.connected = False
-                self.client = None
-                return
-
-            # Extract hostname for logging (mask sensitive info)
-            url = settings.QDRANT_URL.rstrip('/')
-            # Log only the hostname, not the full URL with potential credentials
-            hostname = url.replace('https://', '').replace('http://', '').split('/')[0]
-            logger.info(f"🔗 Connecting to Qdrant at: {hostname}")
-
-            # Initialie client with credentials
-            self.client = QdrantClient(
-                url=url,
-                api_key=settings.QDRANT_API_KEY,
-                timeout=60,
-                prefer_grpc=False # Use REST API for better compatibility in Docker
-            )
+            if settings.QDRANT_HOST:
+                logger.info(f"🔗 Connecting to Qdrant at: {settings.QDRANT_HOST}:{settings.QDRANT_PORT}")
+                self.client = QdrantClient(
+                    host=settings.QDRANT_HOST,
+                    port=settings.QDRANT_PORT,
+                    timeout=60
+                )
+            
+            # Fallback to Cloud qdrant if host not configured
+            elif settings.QDRANT_URL and settings.QDRANT_URL.strip():
+                hostname = settings.QDRANT_URL.replace('https://', '').split('/')[0]
+                logger.info(f"🔗 Connecting to Qdrant at: {hostname}")
+                
+                self.client = QdrantClient(
+                    url=settings.QDRANT_URL,
+                    api_key=settings.QDRANT_API_KEY,
+                    timeout=60
+                )
+            else:
+                logger.info("⚠️ Qdrant connection details not fully configured. Skipping Qdrant initialization.")
+                self.client = QdrantClient(
+                    host="localhost",
+                    port=6333,
+                    timeout=60
+                )
 
             # Test connection without logging sensitive details data
             self.client.get_collections()
@@ -130,6 +136,46 @@ class QdrantVectorDB:
             
             return False
 
+    def search_vector(
+            self,
+            collection_name: str,
+            query_vector: List[float],
+            limit: int = 3,
+            score_threshold: float = 0.5
+    ):
+        """Search for similar vectors in the collection"""
+        try:
+            if not self.client or self.connected:
+                logger.error("❌ Qdrant client is not initialized. Cannot perform search.")
+                return []
+
+            try:
+                results = self.client.search(
+                    collection_name=collection_name,
+                    query_vector=query_vector,
+                    limit=limit,
+                    score_threshold=score_threshold # Minimum similarity score to consider
+                )
+            except AttributeError:
+                results = self.client.search(
+                    collection_name=collection_name,
+                    query_vector=query_vector,
+                    limit=limit
+                )
+
+            return [
+                {
+                    "id": r.id,
+                    "score": r.score,
+                    "metadata": r.payload or {}
+                }
+                for r in results
+            ]
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to search similar vectors in Qdrant: {type(e).__name__}")
+            return []
+        
     def add_point(
         self,
         collection_name: str,
@@ -152,18 +198,20 @@ class QdrantVectorDB:
                 logger.error("❌ Qdrant client is not initialized. Cannot add point.")
                 return False
             
-            # Sanitize metadata fro storage (remove sensitive fields if any)
-            safe_metadata = {k: v for k, v in metadata.items() if k not in ['api_key', 'token', 'password', 'secret']}
+            # Ensure collection exists
+            self.create_collection(collection_name=collection_name, vector_size=len(vector))
+            logger.info(f"✅ Adding point '{point_id}' to collection '{collection_name}' with metadata keys: {list(metadata.keys())}")
             
             point = models.PointStruct(
                 id=str(point_id),
                 vector=vector,
-                payload=safe_metadata
+                payload=metadata
             )
 
             self.client.upsert(
                 collection_name=collection_name,
-                points=[point]
+                points=[point],
+                wait=True # Wait for the operation to complete before returning
             )
             logger.debug(f"✅ Added point '{point_id}' to collection '{collection_name}' with metadata: {metadata}")
             return True
@@ -171,46 +219,6 @@ class QdrantVectorDB:
         except Exception as e:
             logger.error(f"❌ Failed to add point: {type(e).__name__}")
             return False
-
-    def search_vector(
-            self,
-            collection_name: str,
-            query_vector: List[float],
-            limit: int = 5,
-            score_threshold: float = 0.5
-    ):
-        """Search for similar vectors in the collection"""
-        try:
-            if not self.client:
-                logger.error("❌ Qdrant client is not initialized. Cannot perform search.")
-                return []
-
-            results = self.client.search(
-                collection_name=collection_name,
-                query_vector=query_vector,
-                limit=limit,
-                score_threshold=score_threshold # Minimum similarity score to consider
-            )
-
-            formatted = []
-            for result in results:
-                # Sanitize metadata from search results
-                safe_metadata = result.payload or {}
-                if safe_metadata:
-                    safe_metadata = {k: v for k, v in safe_metadata.items() if k not in ['api_key', 'token', 'password', 'secret']}
-
-                    formatted.append({
-                        "id": result.id,
-                        "score": result.score,
-                        "metadata": safe_metadata
-                    })
-            logger.debug(f"🔍 Found {len(results)} similar vectors in collection '{collection_name}'")
-
-            return formatted
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to search similar vectors in Qdrant: {type(e).__name__}")
-            return []
 
     def delete_collection(self, collection_name: str) -> bool:
         """Delete a collection (use with caution)"""

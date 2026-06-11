@@ -22,52 +22,61 @@ class EvidentlyMonitor:
     async def log_llm_response(
         self,
         db: AsyncSession,
-        user_id: str,
-        session_id: str,
-        prompt: str,
-        response: str,
-        response_time_ms: int,
-        tokens_used: int,
-        cost: float,
-        model: str = "llama-3.1-8b-instant"
+        **kwargs
     ):
         """Log LLM interaction for monitoring"""
         try:
-            metric = {
-                "user_id": user_id,
-                "session_id": session_id,
-                "prompt": prompt,
-                "response": response,
-                "response_time_ms": response_time_ms,
-                "tokens_used": tokens_used,
-                "cost": cost,
-                "model": model,
-                "timestamp": datetime.utcnow().isoformat() # Optional: for time-based post-processing in Evidently
-            }
+            # Create a new transaction or use existing one safely
+            interaction_id = str(uuid.uuid4())
 
-            # Store in analytics database
-            insert_query = text("""
-                INSERT INTO analytics.llm_interactions
-                (interaction_id , user_id, session_id, prompt, response, response_time_ms, tokens_used, cost, created_at)
-                VALUES (:interaction_id, :user_id, :session_id, :prompt, :response, :response_time_ms, :tokens_used, :cost, CURRENT_TIMESTAMP)
+            # Check if transaction is active and not aborted
+            try:
+                await db.execute(text("SELECT 1"))
+            except Exception:
+                await db.rollback()  # Rollback if transaction is aborted
+
+            # Insert using raw SQL with proper error handling
+            query = text("""
+                INSERT INTO analytics.llm_interactions (
+                    interaction_id,
+                    user_id,
+                    session_id,
+                    prompt,
+                    response,
+                    response_time_ms,
+                    tokens_used,
+                    cost,
+                    created_at
+                ) VALUES (
+                    :interaction_id,
+                    :user_id,
+                    :session_id,
+                    :prompt,
+                    :response,
+                    :response_time_ms,
+                    :tokens_used,
+                    :cost,
+                    CURRENT_TIMESTAMP
+                )
             """)
-            
-            await db.execute(insert_query, {
-                "interaction_id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "session_id": session_id,
-                "prompt": prompt,
-                "response": response,
-                "response_time_ms": response_time_ms,
-                "tokens_used": tokens_used,
-                "cost": cost
-            })
-            await db.commit()
-            logger.debug(f"✅ Logged LLM response for user {user_id} in session {session_id}")
+
+            await db.execute(
+                query, 
+                {
+                    "interaction_id": interaction_id,
+                    "user_id": kwargs.get("user_id"),
+                    "session_id": kwargs.get("session_id"),
+                    "prompt": kwargs.get("prompt"),
+                    "response": kwargs.get("response"),
+                    "response_time_ms": kwargs.get("response_time_ms"),
+                    "tokens_used": kwargs.get("tokens_used"),
+                    "cost": kwargs.get("cost")
+                }
+            )
+            logger.debug(f"✅ Logged LLM interaction: {interaction_id}")
 
         except Exception as e:
             logger.error(f"❌ Failed to log LLM response: {e}")
-            await db.rollback()
 
     async def get_llm_metrics(self, db: AsyncSession) -> Dict[str, Any]:
         """Get aggregated LLM metrics for monitoring dashboard"""

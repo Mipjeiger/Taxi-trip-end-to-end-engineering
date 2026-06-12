@@ -112,7 +112,7 @@ class RideCreationRequest(BaseModel):
         pattern="^(Car|Motorcycle|Auto|Go Sedan|Premier Sedan|eBike|Uber XL)$"
     )
     distance_km: Optional[float] = Field(10.0, gt=0)
-    demand_pressure: Optional[float] = Field(500.0, ge=170, le=777)
+    demand_pressure: Optional[float] = Field(6200.0, ge=170, le=777)
     rating_avg: Optional[float] = Field(4.5, ge=3.8, le=5.0)
 
     model_config = ConfigDict(

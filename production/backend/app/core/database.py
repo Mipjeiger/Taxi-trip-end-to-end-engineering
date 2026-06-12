@@ -35,9 +35,29 @@ engine = create_async_engine(
     }
 )
 
+# 3.Setup Engine for PostgreSQL connection for raw SQL queries (psycopg2)
+engine_pg = create_async_engine(
+    settings.POSTGRES_URL,
+    echo=False, # No need to echo for raw SQL connection
+    poolclass=NullPool, # Avoid connection pooling issues in serverless
+    connect_args={
+        "connect_timeout": 30,
+        "sslmode": 'require'
+    }
+)
+
 # 4. Setup session factory
 AsyncSessionLocal = async_sessionmaker(
     engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False
+)
+
+# 4.2 Setup session factory for PostgreSQL connection (psycopg2)
+AsyncSessionLocalPg = async_sessionmaker(
+    bind=engine_pg,
     class_=AsyncSession,
     expire_on_commit=False,
     autoflush=False,
@@ -64,9 +84,39 @@ async def init_db():
     finally:
         await conn.close()
 
+async def init_pg_db():
+    """Initialize the PostgreSQL database connection for raw SQL queries."""
+    global engine_pg
+    try:
+        engine_pg = psycopg2.connect(
+            host=settings.POSTGRES_HOST,
+            port=settings.POSTGRES_PORT,
+            user=settings.POSTGRES_USER,
+            password=settings.POSTGRES_PASSWORD,
+            dbname=settings.POSTGRES_DB,
+            sslmode='require',
+            connect_timeout=30
+        )
+        logger.info("✅ PostgreSQL connection initialized for raw SQL queries.")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize PostgreSQL connection: {e}")
+        engine_pg = None
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency function that yields a db session. This ensures the session is closed automatically after the request is done."""
     async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+async def get_pg_db() -> AsyncGenerator[psycopg2.extensions.connection, None]:
+    """Dependency function that yields a psycopg2 connection for raw SQL queries."""
+    async with AsyncSessionLocalPg() as session:
         try:
             yield session
             await session.commit()
@@ -93,6 +143,29 @@ def get_supabase_connection():
         except Exception as e:
             if attempt < max_retries - 1:
                 logger.warning(f"⚠️  Failed to connect to Supabase (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying...")
+                time.sleep(5)  # Wait before retrying
+            else:
+                raise
+
+def get_postgres_connection():
+    """Get a psycopg2 connection to PostgreSQL for raw SQL queries."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(
+                host=settings.POSTGRES_HOST,
+                port=settings.POSTGRES_PORT,
+                user=settings.POSTGRES_USER,
+                password=settings.POSTGRES_PASSWORD,
+                dbname=settings.POSTGRES_DB,
+                sslmode='require',
+                connect_timeout=30
+            )
+            return conn
+        
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"⚠️ Failed to connect to PostgreSQL (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying...")
                 time.sleep(5)  # Wait before retrying
             else:
                 raise

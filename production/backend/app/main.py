@@ -10,7 +10,7 @@ from typing import Dict
 
 from app.api.routes import prediction, ride, driver, analytics, recommendations, llm
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import init_db, init_pg_db
 from app.services.ml_predictor import MLPredictor
 from app.services.vehicle_recommender import VehicleRecommender
 from app.services.surge_recommender import SurgeRecommender
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
     try:
         # Step 1: Initialize database
         logger.info("[1/6] Initializing database...")
-        await init_db()
+        await init_pg_db()
         logger.info("✅ Database initialized successfully")
 
         # Step 2: Initialize Redis

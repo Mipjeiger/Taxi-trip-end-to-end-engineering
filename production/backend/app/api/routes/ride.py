@@ -7,8 +7,9 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 
-from app.core.database import get_db
+from app.core.database import get_db, get_pg_db
 from app.models.ride import Ride
+from app.models.trip import Trip
 from app.models.prediction import (
     RideCreationRequest,
     RideResponse,
@@ -33,7 +34,7 @@ router = APIRouter()
 @router.post("/request", response_model=RideResponse)
 async def create_ride_with_prediction(
     request: RideCreationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pg_db),
     ml_predictor: MLPredictor = Depends(get_ml_predictor)
 ):
     """
@@ -67,7 +68,7 @@ async def create_ride_with_prediction(
             vehicle_type=request.vehicle_type,
             booking_datetime=booking_datetime,
             distance_km=request.distance_km
-        )
+        ) or {}
 
         # Create ride record
         new_ride = Ride(
@@ -79,16 +80,10 @@ async def create_ride_with_prediction(
             price=prediction.get('estimated_price_idr'),
             estimated_pickup_time_minute=prediction.get('estimated_vehicle_arrival_minute'),  # VTAT
             estimated_drop_time_minute=prediction.get('estimated_drop_time_minute'),         # CTAT
-        
-
-        # FIXED: Changed 'status' to 'booking_status' to match Ride model
-        booking_status = BookingStatus.PENDING.value,
-        created_at = booking_datetime,
-        completed_at = None
-
-        # FIXED: Removed vtat=vtat_timestamp because it's not defined in Ride model, and we will store VTAT as estimated_pickup_time_minute
-        # ML Features
-        **feature_dict
+            booking_status=BookingStatus.PENDING.value,
+            created_at=booking_datetime,
+            completed_at=None,
+            **feature_dict
         )
 
         # Store in new ride record
@@ -105,9 +100,9 @@ async def create_ride_with_prediction(
         raise HTTPException(status_code=500, detail=f"Failed to create ride: {str(e)}")
     
 @router.post("/rides/book")
-async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_db)):
+async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_pg_db)):
     try:
-        ride = await create_ride_in_db(db, **payload._model_dump())
+        ride = await create_ride_in_db(db, **payload.model_dump())
     except Exception as e:
         logger.error(f"Error booking ride: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -127,7 +122,7 @@ async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_db)
     return ride
 
 @router.get("/rides/history/{user_id}")
-async def ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_db)):
+async def ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_pg_db)):
     """
     This 500 endpoint - now uses ride_service
     which queries only columns that actually exist in the DB"""
@@ -140,22 +135,22 @@ async def ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depend
 
 
 @router.get("/{ride_id}", response_model=RideResponse)
-async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_db)):
+async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_pg_db)):
     """Get specific ride details including VTAT vehicle arrival"""
     try:
-        query = select(Ride).where(Ride.id == ride_id)
+        query = select(Trip).where(Trip.ride_id == ride_id)
         result = await db.execute(query)
-        ride = result.scalars().first()
+        trip = result.scalars().first()
         
-        if not ride:
-            raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
+        if not trip:
+            raise HTTPException(status_code=404, detail=f"Trip {ride_id} not found")
         
-        return RideResponse.model_validate(ride)
+        return RideResponse.model_validate(trip)
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching ride: {str(e)}")
+        logger.error(f"Error fetching trip: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -163,7 +158,7 @@ async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_db)):
 async def update_ride_status(
     ride_id: str,
     new_status: BookingStatus,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_pg_db)
 ):
     """
     Update ride status (Completed, Cancelled by Driver, etc.)
@@ -172,30 +167,30 @@ async def update_ride_status(
                    Cancelled by Customer, Incomplete, Pending
     """
     try:
-        query = select(Ride).where(Ride.id == ride_id)
+        query = select(Trip).where(Trip.ride_id == ride_id)
         result = await db.execute(query)
-        ride = result.scalars().first()
+        trip = result.scalars().first()
         
-        if not ride:
-            raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
+        if not trip:
+            raise HTTPException(status_code=404, detail=f"Trip {ride_id} not found")
         
         # Update status
-        ride.booking_status = new_status.value
+        trip.booking_status = new_status.value
         
         # Set completed_at if ride is completed
         if new_status == BookingStatus.COMPLETED:
-            ride.completed_at = datetime.utcnow()
+            trip.completed_at = datetime.utcnow()
         
         await db.commit()
-        await db.refresh(ride)
+        await db.refresh(trip)
         
-        logger.info(f"✅ Ride {ride_id} status updated to {new_status.value}")
+        logger.info(f"✅ Trip {ride_id} status updated to {new_status.value}")
         
         return {
             "success": True,
             "ride_id": ride_id,
-            "status": ride.booking_status,
-            "completed_at": ride.completed_at.isoformat() if ride.completed_at else None
+            "status": trip.booking_status,
+            "completed_at": trip.completed_at.isoformat() if trip.completed_at else None
         }
     
     except HTTPException:
@@ -207,7 +202,7 @@ async def update_ride_status(
 
 
 @router.get("/stats/by_status")
-async def get_stats_by_status(db: AsyncSession = Depends(get_db)):
+async def get_stats_by_status(db: AsyncSession = Depends(get_pg_db)):
     """Get ride statistics grouped by booking status"""
     try:
         query = select(Ride)
@@ -240,7 +235,7 @@ async def get_stats_by_status(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/stats/vtat_analysis")
-async def vtat_analysis(db: AsyncSession = Depends(get_db)):
+async def vtat_analysis(db: AsyncSession = Depends(get_pg_db)):
     """Analyze VTAT predictions vs actual arrival times"""
     try:
         # FIXED: Query based on estimated_pickup_time_minute instead of vtat

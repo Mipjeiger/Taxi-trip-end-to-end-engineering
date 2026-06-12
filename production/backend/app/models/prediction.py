@@ -133,34 +133,28 @@ class RideCreationRequest(BaseModel):
 
 class RideResponse(BaseModel):
     """Response for database ride record with all fields"""
-    id: str
-    user_id: str
+    ride_id: str
+    rider_id: str
+    driver_status: str
     pickup_location: str
-    drop_location: str
-    vehicle_type: str
-    price: Optional[float]
-    estimated_pickup_time_minute: float  # VTAT
-    estimated_drop_time_minute: float    # CTAT
-    booking_status: str  # BookingStatus value
-    driver_status: Optional[str] = None  # DriverStatus value
-    avg_rating: Optional[float] = None
+    dropoff_location: str
+    pickup_lat: float
+    pickup_lng: float
+    dropoff_lat: float
+    dropoff_lng: float
+    status: str
+    ride_type: str
+    estimated_fare: float
+    actual_fare: float
+    distance_km: float
+    duration_minutes: float
+    driver_rating: float
+    booking_status: str
     created_at: datetime
     completed_at: Optional[datetime]
-    
-    # ML Features
-    pickup_encoded: Optional[int]
-    drop_encoded: Optional[int]
-    hour: Optional[int]
-    day_of_week: Optional[int]
-    route_cluster: Optional[int]
-    ride_distance: Optional[float]
-    is_peak_hour: Optional[int]
-    is_weekend: Optional[int]
-    is_night: Optional[int]
-    hour_sin: Optional[float]
-    hour_cos: Optional[float]
-    day_sin: Optional[float]
-    day_cos: Optional[float]
+    day_of_week: int
+    demand_pressure: float
+    hour: int
     
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 

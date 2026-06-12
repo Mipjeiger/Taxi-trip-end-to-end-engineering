@@ -21,7 +21,9 @@ ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
-# 2. Setup Engine
+# ================================================================
+# Engine 1: Supabase (external) — SSL required
+# ================================================================
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG, # For only echo SQL in debug mode
@@ -35,18 +37,18 @@ engine = create_async_engine(
     }
 )
 
-# 3.Setup Engine for PostgreSQL connection for raw SQL queries (psycopg2)
+# ================================================================
+# Engine 2: Docker PostgreSQL (internal) — NO SSL
+# ================================================================
 engine_pg = create_async_engine(
-    settings.POSTGRES_URL,
-    echo=False, # No need to echo for raw SQL connection
-    poolclass=NullPool, # Avoid connection pooling issues in serverless
-    connect_args={
-        "connect_timeout": 30,
-        "sslmode": 'require'
-    }
+    settings.POSTGRES_URL, # postgresql+asyncpg://.. (docker)
+    echo=False, 
+    poolclass=NullPool
 )
 
-# 4. Setup session factory
+# ================================================================
+# Session Factories
+# ================================================================
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -64,44 +66,60 @@ AsyncSessionLocalPg = async_sessionmaker(
     autocommit=False
 )
 
+# ================================================================
+# init_db — Supabase (creates ORM tables)
+# ================================================================
 async def init_db():
     """Initialize the database connection and create tables."""
     from app.models.ride import Ride # Import models inside the function to register
 
-    conn = await asyncpg.connect(
-        host=settings.SUPABASE_HOST,
-        port=settings.SUPABASE_PORT,
-        user=settings.SUPABASE_USER,
-        password=settings.SUPABASE_PASSWORD,
-        database=settings.SUPABASE_DB,
-        ssl=ssl_context,
-        statement_cache_size=4
-    )   
+    conn = None
     try:
+        conn = await asyncpg.connect(
+            host=settings.SUPABASE_HOST,
+            port=settings.SUPABASE_PORT,
+            user=settings.SUPABASE_USER,
+            password=settings.SUPABASE_PASSWORD,
+            database=settings.SUPABASE_DB,
+            ssl=ssl_context,
+            statement_cache_size=4
+        )
+        logger.info("✅ Successfully connected to Supabase for database initialization.")
+
         async with engine.begin() as sa_conn:
             await sa_conn.run_sync(Base.metadata.create_all)
-        logger.info("✅ Database initialized and tables created")
+        logger.info("✅ Database tables created successfully.")
+    
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+        raise
     finally:
-        await conn.close()
+        if conn:
+            await conn.close()
 
+# ================================================================
+# init_pg_db — Docker PostgreSQL (verifies connection only)
+# ================================================================
 async def init_pg_db():
     """Initialize the PostgreSQL database connection for raw SQL queries."""
-    global engine_pg
     try:
-        engine_pg = psycopg2.connect(
+        conn = await asyncpg.connect(
             host=settings.POSTGRES_HOST,
             port=settings.POSTGRES_PORT,
             user=settings.POSTGRES_USER,
             password=settings.POSTGRES_PASSWORD,
-            dbname=settings.POSTGRES_DB,
-            sslmode='require',
-            connect_timeout=30
+            database=settings.POSTGRES_DB
         )
-        logger.info("✅ PostgreSQL connection initialized for raw SQL queries.")
+        await conn.close()
+        logger.info("✅ Docker PostgreSQL connection verified (no SSL)")
+    
     except Exception as e:
         logger.error(f"❌ Failed to initialize PostgreSQL connection: {e}")
-        engine_pg = None
+        raise
 
+# ================================================================
+# Dependency: Supabase async session
+# ================================================================
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency function that yields a db session. This ensures the session is closed automatically after the request is done."""
     async with AsyncSessionLocal() as session:
@@ -114,8 +132,11 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         finally:
             await session.close()
 
-async def get_pg_db() -> AsyncGenerator[psycopg2.extensions.connection, None]:
-    """Dependency function that yields a psycopg2 connection for raw SQL queries."""
+# ================================================================
+# Dependency: Docker PostgreSQL async session
+# ================================================================
+async def get_pg_db() -> AsyncGenerator[asyncpg.Connection, None]:
+    """Yield async session for Docker PostgreSQL connection"""
     async with AsyncSessionLocalPg() as session:
         try:
             yield session
@@ -126,8 +147,11 @@ async def get_pg_db() -> AsyncGenerator[psycopg2.extensions.connection, None]:
         finally:
             await session.close()
 
+# ================================================================
+# Sync connections (for ML predictor, background tasks)
+# ================================================================
 def get_supabase_connection():
-    """Get a psycopg2 connection to Supabase for raw SQL queries."""
+    """Sync psycopg2 connection to Supabase - SSL required."""
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -136,7 +160,9 @@ def get_supabase_connection():
                 port=settings.SUPABASE_PORT,
                 user=settings.SUPABASE_USER,
                 password=settings.SUPABASE_PASSWORD,
-                dbname=settings.SUPABASE_DB
+                dbname=settings.SUPABASE_DB,
+                sslmode='require',
+                connect_timeout=30
             )
             return conn
         
@@ -148,7 +174,7 @@ def get_supabase_connection():
                 raise
 
 def get_postgres_connection():
-    """Get a psycopg2 connection to PostgreSQL for raw SQL queries."""
+    """Sync psycopg2 connection to Docker Postgresql"""
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -157,9 +183,7 @@ def get_postgres_connection():
                 port=settings.POSTGRES_PORT,
                 user=settings.POSTGRES_USER,
                 password=settings.POSTGRES_PASSWORD,
-                dbname=settings.POSTGRES_DB,
-                sslmode='require',
-                connect_timeout=30
+                dbname=settings.POSTGRES_DB
             )
             return conn
         

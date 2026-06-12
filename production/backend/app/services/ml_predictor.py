@@ -467,10 +467,11 @@ class MLPredictor:
             
             # Import to avoid circular imports with database module
             from app.core.postgres_db import get_postgres_db
+            from app.core.database import init_pg_db
             from sqlalchemy import text
 
             # Connect table postgresql database
-            async for db in get_postgres_db():
+            async for db in init_pg_db():
                 result = await db.execute(
                     text("SELECT distance_km FROM analytics.trip WHERE ride_id = :ride_id"),
                     {"ride_id": ride_id}

@@ -113,8 +113,10 @@ async def lifespan(app: FastAPI):
     try:
         # Step 1: Initialize database
         logger.info("[1/6] Initializing database...")
+        await init_db()
         await init_pg_db()
-        logger.info("✅ Database initialized successfully")
+        logger.info(f"✅ Database initialized successfully on Supabase on host: {settings.SUPABASE_HOST}")
+        logger.info(f"✅ Database initialized successfully on Docker PostgreSQL on host: {settings.POSTGRES_HOST}")
 
         # Step 2: Initialize Redis
         logger.info("[2/6] Initializing Redis...")

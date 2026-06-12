@@ -107,6 +107,7 @@ class RideCreationRequest(BaseModel):
     user_id: str
     pickup_location: str
     drop_location: str
+    price: float
     vehicle_type: str = Field(
         "Car",
         pattern="^(Car|Motorcycle|Auto|Go Sedan|Premier Sedan|eBike|Uber XL)$"
@@ -114,6 +115,10 @@ class RideCreationRequest(BaseModel):
     distance_km: Optional[float] = Field(10.0, gt=0)
     demand_pressure: Optional[float] = Field(6200.0, ge=170, le=777)
     rating_avg: Optional[float] = Field(4.5, ge=3.8, le=5.0)
+    pickup_lat: float
+    pickup_lng: float
+    dropoff_lat: float
+    dropoff_lng: float
 
     model_config = ConfigDict(
         json_schema_extra={

@@ -2,13 +2,14 @@ import logging
 import time
 import uuid
 import numpy as np
+import random
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 
 from app.core.database import get_db, get_pg_db
-from app.models.ride import Ride
+#from app.models.ride import Ride
 from app.models.trip import Trip
 from app.models.prediction import (
     RideCreationRequest,
@@ -47,6 +48,7 @@ async def create_ride_with_prediction(
     """
     try:
         booking_datetime = datetime.now()
+        completed_at = booking_datetime + timedelta(minutes=request.estimated_drop_time_minute)
         
         # Get ML predictions
         prediction = await ml_predictor.predict_ride_metrics(
@@ -71,18 +73,26 @@ async def create_ride_with_prediction(
         ) or {}
 
         # Create ride record
-        new_ride = Ride(
-            id=f"RIDE-{uuid.uuid4().hex[:12].upper()}",
-            user_id=request.user_id,
+        new_ride = Trip(
+            ride_id=f"CNR{random.randint(1000000,9999999)}",
+            rider_id=request.user_id,
             pickup_location=request.pickup_location,
-            drop_location=request.drop_location,
-            vehicle_type=request.vehicle_type,
-            price=prediction.get('estimated_price_idr'),
-            estimated_pickup_time_minute=prediction.get('estimated_vehicle_arrival_minute'),  # VTAT
-            estimated_drop_time_minute=prediction.get('estimated_drop_time_minute'),         # CTAT
+            dropoff_location=request.drop_location,
+            ride_type=request.vehicle_type,
+            estimated_fare=prediction.get('estimated_price_idr'),
+            actual_fare=request.price,
+            distance_km=request.distance_km,
+            duration_minutes=prediction.get('estimated_drop_time_minute'),
+            driver_rating=request.rating_avg,
             booking_status=BookingStatus.PENDING.value,
+            driver_status=DriverStatus.OFFLINE.value,
+            pickup_lat=request.pickup_lat,
+            pickup_lng=request.pickup_lng,
+            dropoff_lat=request.dropoff_lat,
+            dropoff_lng=request.dropoff_lng,
             created_at=booking_datetime,
-            completed_at=None,
+            completed_at=completed_at,
+
             **feature_dict
         )
 

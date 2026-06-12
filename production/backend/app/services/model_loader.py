@@ -114,3 +114,7 @@ class ModelLoader:
             'config': self.load_config()
         }
         return all_models
+    
+
+# Singletone
+model_loader = ModelLoader()

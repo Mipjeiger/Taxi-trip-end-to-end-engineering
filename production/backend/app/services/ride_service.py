@@ -1,11 +1,12 @@
 import uuid
 import math
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
-from app.models.ride import Ride
+from app.models.trip import Trip
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +33,21 @@ def _compute_features(pickup_encoded: int, drop_encoded: int) -> dict:
 
 async def create_ride_in_db(
     db,
-    rider_id: str,
+    ride_id: str,
     pickup_location: str,
     dropoff_location: str,
     estimated_fare: float,
     distance_km: float,
     duration_minute: float,
     status: str
-) -> Ride:
+) -> Trip:
     """
     Insert a new ride row and return the ORM object.
     Called by the /rides/book route handler.
     """
-    ride = Ride(
-        ride_id=f"RIDE-{uuid.uuid4().hex[:12].upper()}",
-        rider_id=rider_id,
+    trip = Trip(
+        ride_id=f"CNR{random.randint(1000000,9999999)}",
+        rider_id=ride_id,
         pickup_location=pickup_location,
         dropoff_location=dropoff_location,
         status=status,
@@ -55,42 +56,42 @@ async def create_ride_in_db(
         duration_minute=duration_minute,
         created_at=datetime.now()
     )
-    db.add(ride)
+    db.add(trip)
     await db.commit()
-    await db.refresh(ride)
+    await db.refresh(trip)
 
-    return ride
+    return trip
     
 async def complete_ride_in_db(
         db: AsyncSession,
         ride_id: str,
-) -> Optional[Ride]:
+) -> Optional[Trip]:
     """Mark a ride as completed. Called by /rides/{ride_id}/complete route handler."""
-    result = await db.execute(select(Ride).where(Ride.id == ride_id))
-    ride = result.scalar_one_or_none()
+    result = await db.execute(select(Trip).where(Trip.ride_id == ride_id))
+    trip = result.scalar_one_or_none()
 
-    if not ride:
-        logger.warning(f"⚠️ Ride not found for completion: {ride_id}")
+    if not trip:
+        logger.warning(f"⚠️ Trip not found for completion: {ride_id}")
         return None
     
-    ride.booking_status = "completed"
-    ride.completed_at = datetime.now(timezone.utc)
+    trip.booking_status = "completed"
+    trip.completed_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(ride)
-    logger.info(f"✅ Ride completed: {ride_id}")
-    return ride
+    await db.refresh(trip)
+    logger.info(f"✅ Trip completed: {ride_id}")
+    return trip
 
 async def get_ride_history(
     db: AsyncSession,
     user_id: str,
     limit: int = 100,
-) -> list[Ride]:
-    """Fetch ride history for a user. Fixes your original 500 error."""
+) -> list[Trip]:
+    """Fetch trip history for a user. Fixes your original 500 error."""
     result = await db.execute(
-        select(Ride)
-        .where(Ride.user_id == user_id)
-        .order_by(Ride.created_at.desc())
+        select(Trip)
+        .where(Trip.rider_id == user_id)
+        .order_by(Trip.created_at.desc())
         .limit(limit)
     )
     return result.scalars().all()

@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from app.core.redis_client import redis_get, redis_set
 from app.core.database import get_supabase_connection
+from app.services.model_loader import ModelLoader
 import logging
 
 logger = logging.getLogger(__name__)
@@ -449,6 +450,7 @@ class MLPredictor:
             vehicle_arrival_at = booking_datetime + timedelta(minutes=float(vtat_minutes))
             logger.info(f"✅ Vehicle arrives at pickup: {vehicle_arrival_at}")
             return vehicle_arrival_at
+        
         except Exception as e:
             logger.error(f"❌ Error predicting vehicle arrival time: {e}")
             return booking_datetime + timedelta(minutes=10)

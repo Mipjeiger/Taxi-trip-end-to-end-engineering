@@ -388,3 +388,29 @@ async def test_database(db: AsyncSession = Depends(get_postgres_db)):
     except Exception as e:
         logger.error(f"Database test error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    
+@router.get("/debug-route/{pickup}/{dropoff}")
+async def debug_route(pickup: str, dropoff: str, db: AsyncSession = Depends(get_postgres_db)):
+    """Debug endpoint to check why route isn't found."""
+    try:
+        direct_result = await TripRetriever.debug_direct_query(db, pickup, dropoff) # Test direct SQL query
+        similar = await TripRetriever.find_similar_routes(db, pickup, dropoff) # Test similar routes retrieval
+        
+        # Get all routes sample for debugging
+        all_routes = await TripRetriever.get_all_routes(db)
+
+        return {
+            "pickup": pickup,
+            "dropoff": dropoff,
+            "direct_query_result": len(direct_result),
+            "direct_query_data": [{"vehicle": r[0], "pickup": r[1], "dropoff": r[2], "fare": r[3], "duration": r[4]}
+                                  for r in direct_result],
+            "similar_routes_found": len(similar),
+            "similar_routes_data": similar,
+            "all_routes_sample": all_routes[:10] if all_routes else []
+        }
+    
+    except Exception as e:
+        logger.error(f"Debug route error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
+    

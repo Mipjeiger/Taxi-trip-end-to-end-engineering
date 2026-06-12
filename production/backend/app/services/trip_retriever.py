@@ -23,16 +23,15 @@ class TripRetriever:
             query = text("""
                 SELECT 
                     ride_type,
-                    ROUND(AVG(duration_minutes), 1) as avg_duration_min,
-                    ROUND(AVG(distance_km), 1) as avg_distance_km,
-                    ROUND(AVG(estimated_fare)) as avg_estimated_fare,
-                    ROUND(AVG(actual_fare)) as avg_actual_fare,
-                    ROUND(AVG(driver_rating), 1) as avg_driver_rating,
+                    ROUND(AVG(duration_minutes), 1) as avg_duration,
+                    ROUND(AVG(distance_km), 1) as avg_distance,
+                    ROUND(AVG(actual_fare)) as avg_fare,
+                    ROUND(AVG(driver_rating), 1) as avg_rating,
                     COUNT(*) as trip_count
                 FROM analytics.trip
                 WHERE status = 'Completed'
-                    AND LOWER(pickup_location) = LOWER(:pickup)
-                    AND LOWER(dropoff_location) = LOWER(:dropoff)
+                    AND pickup_location ILIKE :pickup
+                    AND dropoff_location ILIKE :dropoff
                 GROUP BY ride_type
                 ORDER BY trip_count DESC
                 LIMIT :limit
@@ -41,8 +40,8 @@ class TripRetriever:
             result = await db.execute(
                 query,
                 {
-                    "pickup": f"{pickup_keyword}",
-                    "dropoff": f"{dropoff_keyword}",
+                    "pickup": f"{pickup_keyword}%",
+                    "dropoff": f"{dropoff_keyword}%",
                     "limit": limit
                 }
             )
@@ -51,100 +50,32 @@ class TripRetriever:
             if rows:
                 logger.info(f"✅ Found {len(rows)} vehicle types for {pickup_keyword} → {dropoff_keyword}")
 
-                return TripRetriever._format_route_results(rows)
+                return [
+                    {
+                        "vehicle_type": row[0],
+                        "avg_duration_min": row[1],
+                        "avg_distance_km": row[2],
+                        "avg_fare": row[3],
+                        "avg_rating": row[4],
+                        "trip_count": row[5]
+                    }
+                    for row in rows
+                ]
             
-            # Strategy 2: Partial match (contains)
-            query2 = text("""
-                SELECT
-                    ride_type,
-                    ROUND(AVG(duration_minutes), 1) as avg_duration_min,
-                    ROUND(AVG(distance_km), 1) as avg_distance_km,
-                    ROUND(AVG(estimated_fare)) as avg_estimated_fare,
-                    ROUND(AVG(actual_fare)) as avg_actual_fare,
-                    ROUND(AVG(driver_rating), 1) as avg_driver_rating,
-                    COUNT(*) as trip_count
-                FROM analytics.trip
-                WHERE status = 'Completed'
-                    AND LOWER(pickup_location) ILIKE LOWER(CONCAT('%', :pickup, '%'))
-                    AND LOWER(dropoff_location) ILIKE LOWER(CONCAT('%', :dropoff, '%'))
-                GROUP BY ride_type
-                ORDER BY trip_count DESC
-                LIMIT :limit
-            """)
-
-            result = await db.execute(
-                query2,
-                {
-                    "pickup": f"{pickup_keyword}",
-                    "dropoff": f"{dropoff_keyword}",
-                    "limit": limit
-                }
-            )
-            rows = result.fetchall()
-
-            if rows:
-                logger.info(f"✅ Found {len(rows)} vehicle types with partial match for {pickup_keyword} → {dropoff_keyword}")
-                return TripRetriever._format_results(rows)
-            
-            # Strategy 3: Try reversing pickup/dropoff (user might have swapped thems)
-            query3 = text("""
-                SELECT
-                    ride_type,
-                    ROUND(AVG(duration_minutes), 1) as avg_duration_min,
-                    ROUND(AVG(distance_km), 1) as avg_distance_km,
-                    ROUND(AVG(estimated_fare)) as avg_estimated_fare,
-                    ROUND(AVG(actual_fare)) as avg_actual_fare,
-                    ROUND(AVG(driver_rating), 1) as avg_driver_rating,
-                    COUNT(*) as trip_count
-                FROM analytics.trip
-                WHERE status = 'Completed'
-                    AND LOWER(pickup_location) LIKE LOWER(CONCAT('%', :dropoff, '%'))
-                    AND LOWER(dropoff_location) LIKE LOWER(CONCAT('%', :pickup, '%'))
-                GROUP BY ride_type
-                ORDER BY trip_count DESC
-                LIMIT :limit
-            """)
-            
-            result = await db.execute(
-                query3,
-                {
-                    "pickup": f"{pickup_keyword}",
-                    "dropoff": f"{dropoff_keyword}",
-                    "limit": limit
-                }
-            )
-            rows = result.fetchall()
-
-            if rows:
-                logger.info(f"✅ Found {len(rows)} vehicle types with reversed locations for {pickup_keyword} → {dropoff_keyword}")
-                return TripRetriever._format_route_results(rows)
-
-            # No results found - log available routes for debugging
-            logger.warning(f"⚠️ No trips found for {pickup_keyword} → {dropoff_keyword}")
-            
-            # Show similar routes from database for debugging
-            similar_query = text("""
-                SELECT DISTINCT pickup_location, dropoff_location, ride_type 
+            # If not foumd, log sample data from database
+            sample_query = text("""
+                SELECT DISTINCT pickup_location, dropoff_location 
                 FROM analytics.trip 
-                WHERE status = 'Completed'
-                    AND (LOWER(pickup_location) LIKE LOWER(CONCAT('%', :pickup, '%')) 
-                         OR LOWER(dropoff_location) LIKE LOWER(CONCAT('%', :dropoff, '%')))
+                WHERE status = 'Completed' 
                 LIMIT 10
             """)
-            similar_result = await db.execute(
-                similar_query,
-                {
-                    "pickup": f"{pickup_keyword}",
-                    "dropoff": f"{dropoff_keyword}"
-                }
-            )
-            similar_rows = similar_result.fetchall()
-
-            if similar_rows:
-                logger.info("🔍 Similar routes in database:")
-                for row in similar_rows:
-                    logger.info(f" - {row[0]}: {row[1]} → {row[2]}")
-
+            sample_result = await db.execute(sample_query)
+            samples = sample_result.fetchall()
+            
+            logger.info("📋 Available routes in DB:")
+            for s in samples:
+                logger.info(f"   - '{s[0]}' → '{s[1]}'")
+            
             return []
 
         except Exception as e:

@@ -48,7 +48,7 @@ async def create_ride_with_prediction(
     """
     try:
         booking_datetime = datetime.now()
-        completed_at = booking_datetime + timedelta(minutes=request.estimated_drop_time_minute)
+        completed_at =
         
         # Get ML predictions
         prediction = await ml_predictor.predict_ride_metrics(
@@ -91,7 +91,7 @@ async def create_ride_with_prediction(
             dropoff_lat=request.dropoff_lat,
             dropoff_lng=request.dropoff_lng,
             created_at=booking_datetime,
-            completed_at=completed_at,
+            completed_at=
 
             **feature_dict
         )

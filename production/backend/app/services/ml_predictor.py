@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from app.core.redis_client import redis_get, redis_set
 from app.core.database import get_supabase_connection
-from app.services.model_loader import ModelLoader
+from app.services.model_loader import model_loader
 import logging
 
 logger = logging.getLogger(__name__)
@@ -406,30 +406,9 @@ class MLPredictor:
             ctat_minutes: float
     ) -> datetime:
         """
-        Predict ride completion timestamp.
-        
-        Formula: completed_at = booking_datetime + CTAT
-        
-        Database reference:
-        - 'Datetime': Booking timestamp
-        - 'Avg CTAT': Completion time in minutes (15.1-39.9 range)
-        - Completed time = Booking time + CTAT duration
-        
-        Args:
-            booking_datetime: When ride was booked
-            ctat_minutes: Predicted CTAT from model
-            
-        Returns:
-            datetime: Predicted ride completion timestamp"""
-        try:
-            # CTAT represents total ride duration
-            completed_at = booking_datetime + timedelta(minutes=float(ctat_minutes))
-            logger.info(f"✅ Predicted completion: {booking_datetime} + {ctat_minutes:.1f} min = {completed_at}")
-            return completed_at
-        
-        except Exception as e:
-            logger.error(f"❌ Error predicting completion time: {e}")
-            return booking_datetime + timedelta(minutes=30)
+        Predict for completed_at using VTAT prediction.
+        Formula: based on machine learning algorithm prediction
+        """
         
     async def predict_vehicle_arrival(
             self,

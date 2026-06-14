@@ -1,6 +1,7 @@
 import logging
 import time
 import uuid
+import json
 import numpy as np
 import random
 from fastapi import APIRouter, HTTPException, Depends
@@ -27,6 +28,7 @@ from app.services.ride_service import (
     get_ride_history
 )
 from app.services.kafka_producer import kafka_producer
+from app.core.redis_client import redis_get, redis_set
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,7 +50,8 @@ async def create_ride_with_prediction(
     """
     try:
         booking_datetime = datetime.now()
-        completed_at =
+        hour = booking_datetime.hour
+        day_of_week = booking_datetime.weekday()
         
         # Get ML predictions
         prediction = await ml_predictor.predict_ride_metrics(
@@ -62,6 +65,12 @@ async def create_ride_with_prediction(
             demand_pressure=request.demand_pressure,
             rating_avg=request.rating_avg
         )
+
+        # Compute timestamps
+        ctat_minutes = prediction.get('estimated_drop_time_minute', 0.0)
+        vtat_minutes = prediction.get('estimated_pickup_time_minute', 0.0)
+        completed_at = booking_datetime + timedelta(minutes=ctat_minutes)
+        vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_minutes)
         
         # Extract ML features for database storage
         feature_dict = await _extract_ride_features(
@@ -73,7 +82,7 @@ async def create_ride_with_prediction(
         ) or {}
 
         # Create ride record
-        new_ride = Trip(
+        new_trip = Trip(
             ride_id=f"CNR{random.randint(1000000,9999999)}",
             rider_id=request.user_id,
             pickup_location=request.pickup_location,
@@ -82,7 +91,7 @@ async def create_ride_with_prediction(
             estimated_fare=prediction.get('estimated_price_idr'),
             actual_fare=request.price,
             distance_km=request.distance_km,
-            duration_minutes=prediction.get('estimated_drop_time_minute'),
+            duration_minutes=ctat_minutes,
             driver_rating=request.rating_avg,
             booking_status=BookingStatus.PENDING.value,
             driver_status=DriverStatus.OFFLINE.value,
@@ -91,23 +100,23 @@ async def create_ride_with_prediction(
             dropoff_lat=request.dropoff_lat,
             dropoff_lng=request.dropoff_lng,
             created_at=booking_datetime,
-            completed_at=
+            completed_at=completed_at,
 
             **feature_dict
         )
 
         # Store in new ride record
-        db.add(new_ride)
+        db.add(new_trip)
         await db.commit()
-        await db.refresh(new_ride)
-        logger.info(f"✅ Ride created: {new_ride.id} | Booking Status: {new_ride.booking_status}")
+        await db.refresh(new_trip)
+        logger.info(f"✅ Trip created: {new_trip.id} | Booking Status: {new_trip.booking_status}")
 
-        return RideResponse.model_validate(new_ride)
+        return RideResponse.model_validate(new_trip)
     
     except Exception as e:
         await db.rollback()
-        logger.error(f"❌ Ride creation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to create ride: {str(e)}")
+        logger.error(f"❌ Trip creation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create trip: {str(e)}")
     
 @router.post("/rides/book")
 async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_pg_db)):
@@ -213,20 +222,20 @@ async def update_ride_status(
 
 @router.get("/stats/by_status")
 async def get_stats_by_status(db: AsyncSession = Depends(get_pg_db)):
-    """Get ride statistics grouped by booking status"""
+    """Get trip statistics grouped by booking status"""
     try:
-        query = select(Ride)
+        query = select(Trip)
         result = await db.execute(query)
-        all_rides = result.scalars().all()
+        all_trips = result.scalars().all()
         
         # Count by status
         status_counts = {}
-        for ride in all_rides:
-            status = ride.booking_status
+        for trip in all_trips:
+            status = trip.booking_status
             status_counts[status] = status_counts.get(status, 0) + 1
         
         return {
-            "total_rides": len(all_rides),
+            "total_trips": len(all_trips),
             "by_status": status_counts,
             "summary": {
                 "completed": status_counts.get(BookingStatus.COMPLETED.value, 0),
@@ -249,17 +258,17 @@ async def vtat_analysis(db: AsyncSession = Depends(get_pg_db)):
     """Analyze VTAT predictions vs actual arrival times"""
     try:
         # FIXED: Query based on estimated_pickup_time_minute instead of vtat
-        query = select(Ride).where(Ride.estimated_pickup_time_minute.isnot(None))
+        query = select(Trip).where(Trip.estimated_pickup_time_minute.isnot(None))
         result = await db.execute(query)
-        rides_with_vtat = result.scalars().all()
+        trips_with_vtat = result.scalars().all()
         
-        if not rides_with_vtat:
+        if not trips_with_vtat:
             return {"message": "No VTAT data available"}
         
         # Calculate statistics
         vtat_minutes = []
-        for ride in rides_with_vtat:
-            vtat_minutes.append(ride.estimated_pickup_time_minute)
+        for trip in trips_with_vtat:
+            vtat_minutes.append(trip.estimated_pickup_time_minute)
         
         if vtat_minutes:
             vtat_array = np.array(vtat_minutes)
@@ -338,3 +347,17 @@ async def _extract_ride_features(
             "day_sin": 0.0,
             "day_cos": 1.0
         }
+    
+async def get_or_encode_location(location: str, loc_type: str = "pickup") -> int:
+    """Cache location encoding in Redis to avoid recomputation"""
+    cache_key = f"loc_enc:{loc_type}:{location.lower()}"
+    cached = await redis_get(cache_key)
+    
+    if cached:
+        return int(cached)
+    
+    # Fallback to hash encoding location matcher
+    encoded = abs(hash(location)) % 1000
+    await redis_set(cache_key, str(encoded), expire=86400)
+
+    return encoded

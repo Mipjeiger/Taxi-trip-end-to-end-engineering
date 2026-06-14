@@ -122,19 +122,6 @@ class MLPredictor:
     ) -> Dict:
         """ 
         Predict ride metrics (CTAT, VTAT, price, completion time).
-    
-        Args:
-            pickup: Pickup location name
-            drop: Dropoff location name
-            vehicle_type: Vehicle type (Auto, Car, Go Sedan, Motorcycle, Premier Sedan, eBike, Uber XL)
-            hour: Hour of day (0-23)
-            day_of_week: Day of week (0=Monday, 6=Sunday)
-            distance_km: Distance in kilometers
-            booking_datetime: When ride was booked (defaults to now)
-            demand_pressure: Demand pressure value (170-777 from database)
-            rating_avg: Average driver+customer rating (3.8-5.0)
-            use_fallback: Force use of fallback models
-            ride_id: Optional ride ID for tracking
         Returns:
             Dict with predictions including estimated_completed_at"""
         if not self.is_loaded:

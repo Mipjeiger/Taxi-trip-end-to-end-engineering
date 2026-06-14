@@ -115,6 +115,7 @@ class RideCreationRequest(BaseModel):
     distance_km: Optional[float] = Field(10.0, gt=0)
     demand_pressure: Optional[float] = Field(6200.0, ge=170, le=777)
     rating_avg: Optional[float] = Field(4.5, ge=3.8, le=5.0)
+    price: float
     pickup_lat: float
     pickup_lng: float
     dropoff_lat: float
@@ -129,7 +130,8 @@ class RideCreationRequest(BaseModel):
                 "vehicle_type": "Car",
                 "distance_km": 23.72,
                 "demand_pressure": 172.875,
-                "rating_avg": 4.3
+                "rating_avg": 4.3,
+                "price": 414000
             }
         },
         protected_namespaces=()

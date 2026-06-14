@@ -26,7 +26,7 @@ load_dotenv(dotenv_path=ENV_PATH)
 # ================================================================
 
 class AnalyticdDatabase:
-    """Manages connection to PostgreSQL database for analytics
+    """Manages connection to PostgreSQL database for analyticsc
     Separate from Supabase connection used for transactional data to avoid performance impact on main app"""
 
     def __init__(self):

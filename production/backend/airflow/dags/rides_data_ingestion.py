@@ -1,5 +1,6 @@
 import logging
 import os
+import redis
 import json
 from pathlib import Path
 from dotenv import load_dotenv
@@ -482,7 +483,38 @@ def load_to_postgres(**context):
         raise
 
 # ================================================================
-# Task 4: Publish Kafka Event
+# Task 4: cache route features to redis
+# ================================================================
+def cache_route_features(**context):
+    """Cache routes retrieval by airflow to redis"""
+    r = redis.Redis(host='redis', port=6379, decode_responses=True)
+    conn = get_postgres_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT pickup_location, dropoff_location,
+                    AVG(duration_minutes) AS avg_duration,
+                    AVG(actual_fare) AS avg_fare,
+                    COUNT(*) AS trip_count
+            FROM analytics.trip
+            WHERE status = 'Completed'
+            GROUP BY pickup_location, dropoff_location
+        """)
+    
+    for row in cur.fetchall():
+        key = f"route_features:{row[0]|{row[1]}}"
+        value = json.dumps({
+            "avg_duration": float(row[2]) if row[2] else None,
+            "avg_fare": float(row[3]) if row[3] else None,
+            "trip_count": row[4]
+        })
+        r.setex(key, 86400, value)
+
+    # Close connection
+    conn.close()
+    
+
+# ================================================================
+# Task 5: Publish Kafka Event
 # ================================================================
 def publish_kafka_event(**context):
     """Publish ingestion completion event to Kafka"""
@@ -537,7 +569,7 @@ def publish_kafka_event(**context):
         raise e
 
 # ================================================================
-# Task 5: Data Quality Checks
+# Task 6: Data Quality Checks
 # ================================================================
 def data_quality_checks(**context):
     """Run data quality validation againts the PostgreSQL database"""
@@ -702,6 +734,12 @@ task_load_postgres = PythonOperator(
     dag=dag,
 )
 
+task_cache_redis = PythonOperator(
+    task_id="cache_route_features",
+    python_callable=cache_route_features,
+    dag=dag,
+)
+
 task_kafka_event = PythonOperator(
     task_id="publish_kafka_event",
     python_callable=publish_kafka_event,
@@ -718,4 +756,4 @@ task_quality_check = PythonOperator(
 # Task Dependencies
 # ================================================================
 
-task_extract  >> task_transform >> task_load_postgres >> [task_kafka_event, task_quality_check]
+task_extract  >> task_transform >> task_load_postgres >> task_cache_redis >> [task_kafka_event, task_quality_check]

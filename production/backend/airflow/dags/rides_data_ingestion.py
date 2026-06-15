@@ -340,7 +340,7 @@ def transform_data(**context):
 
         # Log null summary before saving
         key_cols = ["ride_id", "rider_id", "booking_status", "driver_status",
-                    "status", "actual_fare", "distance_km", "day_of_week", "demand_pressure", "hour"]
+                    "status", "actual_fare", "distance_km", "day_of_week", "demand_pressure", "hour", "vehicle_arrival_at"]
         
         null_summary = {c: int(df[c].isna().sum()) for c in key_cols if c in df.columns}
         logger.info(f"Null summary before saving:\n{null_summary}")
@@ -488,31 +488,40 @@ def load_to_postgres(**context):
 # ================================================================
 def cache_route_features(**context):
     """Cache routes retrieval by airflow to redis"""
-    r = redis.Redis(host='redis', port=6379, decode_responses=True)
-    conn = get_postgres_conn()
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT pickup_location, dropoff_location,
-                    AVG(duration_minutes) AS avg_duration,
-                    AVG(actual_fare) AS avg_fare,
-                    COUNT(*) AS trip_count
-            FROM analytics.trip
-            WHERE status = 'Completed'
-            GROUP BY pickup_location, dropoff_location
-        """)
-    
-    for row in cur.fetchall():
-        key = f"route_features:{row[0]|{row[1]}}"
-        value = json.dumps({
-            "avg_duration": float(row[2]) if row[2] else None,
-            "avg_fare": float(row[3]) if row[3] else None,
-            "trip_count": row[4]
-        })
-        r.setex(key, 86400, value)
+    try:
+        r = redis.Redis(host='redis', port=6379, decode_responses=True)
+        conn = get_postgres_conn()
 
-    # Close connection
-    conn.close()
-    
+        rows = []
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT pickup_location, dropoff_location,
+                        AVG(duration_minutes) AS avg_duration,
+                        AVG(actual_fare) AS avg_fare,
+                        COUNT(*) AS trip_count
+                FROM analytics.trip
+                WHERE status = 'Completed'
+                GROUP BY pickup_location, dropoff_location
+            """)
+            rows = cur.fetchall() # Fetch while cursor is still open
+        
+        for row in rows:
+            key = f"route_features:{row[0]}:{row[1]}"
+            value = json.dumps({
+                "avg_duration": float(row[2]) if row[2] else None,
+                "avg_fare": float(row[3]) if row[3] else None,
+                "trip_count": row[4]
+            })
+            r.setex(key, 86400, value)
+
+        # Close connection
+        conn.close()
+        logger.info(f"✅ Cached {len(rows)} route features to Redis")
+
+    except Exception as e:
+        logger.exception("❌ Failed caching route features to Redis")
+        raise
 
 # ================================================================
 # Task 5: Publish Kafka Event
@@ -653,7 +662,7 @@ def data_quality_checks(**context):
                 duplicates = cur.fetchone()[0]
                 if duplicates > 0:
                     logger.warning(f"⚠️ Found {duplicates} duplicate ride_id records")
-                else:
+                else:   
                     logger.info("✅ No duplicate ride_id records found")
 
                 # Status distribution

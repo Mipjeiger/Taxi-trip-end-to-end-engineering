@@ -50,8 +50,6 @@ async def create_ride_with_prediction(
     """
     try:
         booking_datetime = datetime.now()
-        hour = booking_datetime.hour
-        day_of_week = booking_datetime.weekday()
         
         # Get ML predictions
         prediction = await ml_predictor.predict_ride_metrics(
@@ -68,9 +66,9 @@ async def create_ride_with_prediction(
 
         # Compute timestamps
         ctat_minutes = prediction.get('estimated_drop_time_minute', 0.0)
-        vtat_minutes = prediction.get('estimated_pickup_time_minute', 0.0)
-        completed_at = booking_datetime + timedelta(minutes=ctat_minutes)
+        vtat_minutes = prediction.get('estimated_vehicle_arrival_minute', 0.0)
         vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_minutes)
+        completed_at = booking_datetime + timedelta(minutes=ctat_minutes)
         
         # Extract ML features for database storage
         feature_dict = await _extract_ride_features(
@@ -100,7 +98,8 @@ async def create_ride_with_prediction(
             dropoff_lat=request.dropoff_lat,
             dropoff_lng=request.dropoff_lng,
             created_at=booking_datetime,
-            completed_at=completed_at,
+            vehicle_arrival_at=vehicle_arrival_at, # VTAT timestamp for on the ride for pickup location
+            completed_at=completed_at, # CTAT timestamp for completion for dropoff location
 
             **feature_dict
         )

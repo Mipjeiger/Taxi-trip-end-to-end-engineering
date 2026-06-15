@@ -9,8 +9,16 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 # Add project root to path
-project_root = Path(__file__).resolve().parent.parent.parent.parent
+current_file = Path(__file__).resolve()
+backend_dir = Path(__file__).resolve().parent.parent
+project_root = backend_dir.parent.parent # .../Gojek-Project/
+
+# Add both backend directory and project root to path
+sys.path.insert(0, str(backend_dir))
 sys.path.insert(0, str(project_root))
+print(f"📁 Backend directory: {backend_dir}")
+print(f"📁 Project root: {project_root}")
+print(f"📁 Python path includes: {sys.path[0]}")
 
 from sqlalchemy import text
 from app.core.postgres_db import get_postgres_db

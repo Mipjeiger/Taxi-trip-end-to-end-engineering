@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS analytics.trip (
     driver_rating    DOUBLE PRECISION,
     booking_status   VARCHAR,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    vehicle_arrival_at TIMESTAMP,
     completed_at     TIMESTAMP
 );
 
@@ -63,13 +64,16 @@ SELECT * FROM analytics.trip;
 -- ================================================================
 -- Table 3: Driver profiles
 -- ================================================================
+DROP TABLE IF EXISTS analytics.drivers;
 CREATE TABLE IF NOT EXISTS analytics.drivers (
     driver_id   VARCHAR PRIMARY KEY,
     name        VARCHAR,
     vehicle     VARCHAR,
     rating      DOUBLE PRECISION,
     status      VARCHAR,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    vehicle_arrival_at TIMESTAMP,
+    completed_at TIMESTAMP
 );
 
 SELECT * FROM analytics.drivers;

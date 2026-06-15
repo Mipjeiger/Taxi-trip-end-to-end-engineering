@@ -41,7 +41,7 @@ async def create_ride_with_prediction(
     ml_predictor: MLPredictor = Depends(get_ml_predictor)
 ):
     """
-    Create new ride with ML predictions including VTAT vehicle arrival.
+    Create new ride with ML predictions including VTAT & CTAT Machine learning models implementation.
     
     Flow:
     1. Get ML predictions (VTAT, CTAT, price)

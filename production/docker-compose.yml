@@ -271,7 +271,7 @@ services:
   # Airflow database
   airflow-db:
     image: postgres:15-alpine
-    container_name: airflow_db
+    container_name: airflow-db
     environment:
       POSTGRES_USER: ${AIRFLOW_DB_USER}
       POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
@@ -292,7 +292,7 @@ services:
     build:
       context: ./backend/airflow
       dockerfile: Dockerfile  
-    container_name: airflow_webserver
+    container_name: airflow-webserver
     deploy:
       resources:
         limits:
@@ -357,7 +357,7 @@ services:
     build:
       context: ./backend/airflow
       dockerfile: Dockerfile
-    container_name: airflow_scheduler
+    container_name: airflow-scheduler
     deploy:
       resources:
         limits:

@@ -25,6 +25,7 @@ class Trip(Base):
     driver_rating = Column(Float)
     booking_status = Column(String)
     created_at = Column(DateTime)
+    vehicle_arrival_at = Column(DateTime)
     completed_at = Column(DateTime)
     day_of_week = Column(Integer)
     demand_pressure = Column(Float)

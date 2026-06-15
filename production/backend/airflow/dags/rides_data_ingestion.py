@@ -394,6 +394,7 @@ def load_to_postgres(**context):
             "duration_minutes",
             "driver_rating",
             "created_at",
+            "vehicle_arrival_at",
             "completed_at",
             "day_of_week",
             "demand_pressure",
@@ -417,7 +418,7 @@ def load_to_postgres(**context):
                 df_insert[float_col] = pd.to_numeric(df_insert[float_col], errors="coerce")
 
 
-        for ts_col in ["created_at", "completed_at"]:
+        for ts_col in ["created_at", "completed_at", "vehicle_arrival_at"]:
             if ts_col in df_insert.columns:
                 df_insert[ts_col] = pd.to_datetime(df_insert[ts_col], errors="coerce")
 

@@ -87,6 +87,7 @@ COLUMN_RENAME_MAP = {
     "drop_lat": "dropoff_lat",
     "drop_lon": "dropoff_lng",
     "booking_value": "actual_fare",
+    "datetime": "created_at"
 }
 
 # ----------------------------------------------------------------
@@ -257,6 +258,22 @@ def transform_data(**context):
             df["booking_status"] = "Unknown"
             logger.info("⚠️ No status column found, setting status and booking_status to 'Unknown'")
 
+        # Enforce conditional values for vehicle_arrival_at and completed_at based on booking_status
+        if "booking_status" in df.columns:
+            if "vehicle_arrival_at" not in df.columns:
+                df["vehicle_arrival_at"] = None
+            
+            if "completed_at" not in df.columns:
+                df["completed_at"] = None
+
+            # For vehicle_arrival_at: except 'completed' set to Timestamp
+            df["vehicle_arrival_at"] = df.apply(lambda row: "2026-01-01 00:00:00" 
+            if str(row["booking_status"]).strip() != "Completed" else row["vehicle_arrival_at"], axis=1)
+
+            # For completed_at: except 'completed' set to No Trip
+            df["completed_at"] = df.apply(lambda row: "No Trip" 
+            if str(row["booking_status"]).strip() != "Completed" else row["completed_at"], axis=1)
+
         # FIX 2: estimated_fare population + empty string cleaning
         # The source parquet stores missing fares as empty strings (""),
         # not NaN/None. pd.to_numeric(..., errors="coerce") converts ""
@@ -418,7 +435,7 @@ def load_to_postgres(**context):
                 df_insert[float_col] = pd.to_numeric(df_insert[float_col], errors="coerce")
 
 
-        for ts_col in ["created_at", "completed_at", "vehicle_arrival_at"]:
+        for ts_col in ["created_at", "vehicle_arrival_at"]:
             if ts_col in df_insert.columns:
                 df_insert[ts_col] = pd.to_datetime(df_insert[ts_col], errors="coerce")
 

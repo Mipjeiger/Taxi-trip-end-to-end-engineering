@@ -1,3 +1,4 @@
+from ctypes import Union
 import pandas as pd
 import numpy as np
 import pickle
@@ -433,17 +434,29 @@ class MLPredictor:
     async def predict_completed_at(
             self,
             booking_datetime: datetime,
-            ctat_minutes: float
-    ) -> datetime:
+            ctat_minutes: float,
+            booking_status: str = "Completed"
+    ) -> Union[datetime, str]:
         """
         Predict for completed_at using VTAT prediction.
         Formula: based on machine learning algorithm prediction
         """
-        
+        if booking_status != "Completed":
+            return "No Trip"
+        try:
+            completed_at = booking_datetime + timedelta(minutes=float(ctat_minutes))
+            logger.info(f"✅ Completed at dropoff: {completed_at}")
+            return completed_at
+
+        except Exception as e:
+            logger.error(f"❌ Error predicting completed at: {e}")
+            return booking_datetime + timedelta(minutes=20)
+
     async def predict_vehicle_arrival(
             self,
             booking_datetime: datetime,
-            vtat_minutes: float
+            vtat_minutes: float,
+            booking_status: str = "Completed"
     ) -> datetime:
         """
         Predict vehicle arrival timestamp at pickup location.
@@ -455,6 +468,9 @@ class MLPredictor:
         Returns:
             datetime: Predicted vehicle arrival timestamp
         """
+        if booking_status != "Completed":
+            return datetime(2026, 1, 1, 0, 0, 0)
+
         try:
             vehicle_arrival_at = booking_datetime + timedelta(minutes=float(vtat_minutes))
             logger.info(f"✅ Vehicle arrives at pickup: {vehicle_arrival_at}")

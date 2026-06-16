@@ -1,3 +1,4 @@
+from typing import Union
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
@@ -158,7 +159,8 @@ class RideResponse(BaseModel):
     driver_rating: float
     booking_status: str
     created_at: datetime
-    completed_at: Optional[datetime]
+    vehicle_arrival_at: Optional[datetime]
+    completed_at: Optional[Union[datetime, str]]
     day_of_week: int
     demand_pressure: float
     hour: int

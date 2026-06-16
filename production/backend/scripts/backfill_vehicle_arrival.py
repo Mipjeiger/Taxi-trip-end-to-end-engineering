@@ -105,8 +105,10 @@ async def backfill_vehicle_arrival(batch_size: int = 500):
                     ride_type = trip[3] if trip[3] else "Car"
                     distance_km = trip[4] if trip[4] else 10.0
                     created_at = trip[5]
-                    hour = int(trip[7])
-                    day_of_week = int(trip[8])
+                    if created_at is None:
+                        created_at = datetime.now()
+                    hour = int(trip[7]) if trip[7] is not None else created_at.hour
+                    day_of_week = int(trip[8]) if trip[8] is not None else created_at.weekday()
 
                     # Get ML Prediction
                     prediction = await ml_predictor.predict_ride_metrics(

@@ -141,30 +141,65 @@ class MLPredictor:
             )
 
             # Predict CTAT (Customer Time to Arrival), VTAT (Vehicle Time to Arrival), and calculate price
-            ctat_pred = await self._predict_ctat(features_df, use_fallback)
-            vtat_pred = await self._predict_vtat(features_df, use_fallback)
+            try:
+                ctat_pred = await self._predict_ctat(features_df, use_fallback)
+                vtat_pred = await self._predict_vtat(features_df, use_fallback)
+            except Exception as e:
+                raise ValueError(f"VTAT prediction failed: {e}")
+            
             total_time = ctat_pred + vtat_pred
 
             # Calculate price with database informed logic
-            estimated_price = await self._calculate_price(
-                distance_km=distance_km,
-                time_min=total_time,
-                vehicle_type=vehicle_type,
-                is_peak_hour=is_peak_hour,
-                is_night=is_night,
-                demand_pressure=demand_pressure,
-                rating_avg=rating_avg
-            )
+            try:
+                estimated_price = await self._calculate_price(
+                    distance_km=distance_km,
+                    time_min=total_time,
+                    vehicle_type=vehicle_type,
+                    is_peak_hour=is_peak_hour,
+                    is_night=is_night,
+                    demand_pressure=demand_pressure,
+                    rating_avg=rating_avg
+                )
+            except Exception as e:
+                raise ValueError(f"Price calculation failed: {e}")
 
-            # Predict completion timestamp, vehicle arrival timestamp, and their respective statuses
-            completed_at = await self.predict_completed_at(booking_datetime, ctat_pred)
-            vehicle_arrival_at = await self.predict_vehicle_arrival(booking_datetime, vtat_pred)
-            vehicle_arrival_status = await self._calculate_vehicle_arrival_status(vtat_pred)
+            # Predict completion timestamp with fallback logic
+            try:
+                completed_at = await self.predict_completed_at(booking_datetime, ctat_pred)
+                if completed_at is None:
+                    completed_at = booking_datetime + timedelta(minutes=ctat_pred)
 
-            # Predict to get driver based on status -> TODO: define logic customer arrival status & driver status based on CTAT prediction and database insights
-            customer_arrival_at = await self.predict_completed_at(booking_datetime, total_time)
-            customer_arrival_status = await self._calculate_customer_arrival_status(ctat_pred)
-            
+            except Exception as e:
+                logger.error(f"❌ Comppleted at prediction failed: {e}, using fallback.")
+                completed_at = booking_datetime + timedelta(minutes=ctat_pred)
+
+            try:
+                vehicle_arrival_at = await self.predict_vehicle_arrival(booking_datetime, vtat_pred)
+                if vehicle_arrival_at is None:
+                    vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_pred)
+
+            except Exception as e:
+                logger.error(f"❌ Vehicle arrival prediction failed: {e}, using fallback.")
+                vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_pred)
+
+            try:
+                vehicle_arrival_status = await self._calculate_vehicle_arrival_status(vtat_pred)
+            except Exception as e:
+                logger.error(f"❌ Vehicle arrival status calculation failed: {e}, using fallback.")
+                vehicle_arrival_status = "coming"
+
+            try:
+                customer_arrival_status = await self._calculate_customer_arrival_status(ctat_pred)
+            except Exception as e:
+                logger.error(f"❌ Customer arrival status calculation failed: {e}, using fallback.")
+                customer_arrival_status = "on_the_way"
+
+            # Ensture all timestamps are datetime objects
+            if completed_at is None:
+                completed_at = booking_datetime + timedelta(minutes=ctat_pred)
+
+            if vehicle_arrival_at is None:
+                vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_pred)
             
             # Return prediction into dictionary format
             return {
@@ -293,9 +328,17 @@ class MLPredictor:
             if not use_fallback and 'vtat_primary' in self.models:
                 # Use ML model are trained
                 features_scaled = self.scalers['ultra'].transform(features_df)
-                vtat = float(self.models['vtat_primary'].predict(features_scaled)[0])
+                
+                try:
+                    vtat = float(self.models['vtat_primary'].predict(features_scaled)[0])
+                except TypeError as e:
+                    if "force_all_finite" in str(e):
+                        # Retry without forece_all_finite parameter
+                        vtat = float(self.models['vtat_primary'].predict(features_scaled, force_all_finite=False)[0])
+                    else:
+                        raise e
+                    
             elif 'vtat_fallback' in self.models:
-                # Use fallback NN model
                 features_scaled = self.scalers['minmax'].transform(features_df)
                 vtat = float(self.models['vtat_fallback'].predict(features_scaled, verbose=0)[0])
             else:

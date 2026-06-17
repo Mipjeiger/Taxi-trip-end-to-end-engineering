@@ -1,4 +1,4 @@
--- Active: 1781591252887@@localhost@5433@taxi_db
+-- Active: 1780295933317@@127.0.0.1@5433@taxi_db
 -- DuckDB Analytics Schema (Local Tables)
 -- PostgreSQL schema for analytics
 CREATE SCHEMA IF NOT EXISTS analytics;
@@ -38,6 +38,17 @@ ALTER TABLE analytics.trip
 ADD COLUMN demand_pressure DOUBLE PRECISION;
 
 ALTER TABLE analytics.trip ADD COLUMN hour INTEGER;
+
+-- Add new columns feature by ingestion new features
+ALTER TABLE analytics.trip
+ADD COLUMN IF NOT EXISTS pickup_encoded INTEGER,
+ADD COLUMN IF NOT EXISTS drop_encoded INTEGER,
+ADD COLUMN IF NOT EXISTS route_cluster INTEGER;
+
+-- add new columns for VTAT and CTAT in minutes
+ALTER TABLE analytics.trip
+ADD COLUMN IF NOT EXISTS vtat_minutes FLOAT,
+ADD COLUMN IF NOT EXISTS ctat_minutes FLOAT;
 
 CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id VARCHAR PRIMARY KEY,
@@ -210,3 +221,34 @@ SET
     ride_type = 'Terios'
 WHERE
     ride_type = 'Uber XL';
+
+-- Backfill ML features for existing trips
+-- This computes values from existing data
+
+-- 1. Backfill vtat_minutes and ctat_minutes
+UPDATE analytics.trip
+SET
+    ctat_minutes = duration_minutes,
+    vtat_minutes = EXTRACT(EPOCH FROM (vehicle_arrival_at - created_at)) / 60
+WHERE vehicle_arrival_at IS NOT NULL
+    AND duration_minutes IS NOT NULL
+    AND vtat_minutes IS NULL;
+
+-- 2. For trips without vehicle_arrival_at, estimate VTAT as 30% of CTAT
+UPDATE analytics.trip
+SET
+    ctat_minutes = duration_minutes,
+    vtat_minutes = duration_minutes * 0.3
+WHERE vehicle_arrival_at IS NULL
+    AND duration_minutes IS NOT NULL
+    AND vtat_minutes IS NULL;
+
+-- 3. Backfill pickup_encoded, drop_encoded, route_cluster
+-- Using hash-based encoding (consistent with your ML pipeline)
+
+UPDATE analytics.trip 
+SET 
+    pickup_encoded = ABS(hashtext(COALESCE(pickup_location, ''))) % 1000,
+    drop_encoded = ABS(hashtext(COALESCE(dropoff_location, ''))) % 1000,
+    route_cluster = ABS(hashtext(COALESCE(pickup_location, '') || '|' || COALESCE(dropoff_location, ''))) % 100
+WHERE pickup_encoded IS NULL;

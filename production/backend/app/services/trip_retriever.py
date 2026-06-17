@@ -2,7 +2,8 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
-from app.core.config import settings
+from app.services.redis_service import RedisService
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,14 @@ class TripRetriever:
         dropoff_keyword: str,
         limit: int = 5
     ) -> List[Dict]:
-        """Find real trips using raw SQL for reliability"""
+        """Find real trips with Redis caching"""
+        
+        # Try Redis cache first
+        cached = await RedisService.get_route_features(pickup_keyword, dropoff_keyword)
+        if cached:
+            logger.info(f"✅ Cache hit for {pickup_keyword} → {dropoff_keyword}")
+            return cached.get('routes', [])
+
         try:
             logger.info(f"🔍 Searching for trips from '{pickup_keyword}' to '{dropoff_keyword}'")
             
@@ -25,7 +33,7 @@ class TripRetriever:
                     ride_type,
                     ROUND(AVG(duration_minutes), 1) as avg_duration,
                     ROUND(AVG(distance_km), 1) as avg_distance,
-                    ROUND(AVG(actual_fare)) as avg_fare,
+                    ROUND(AVG(actual_fare), 2) as avg_fare,
                     ROUND(AVG(driver_rating), 1) as avg_rating,
                     COUNT(*) as trip_count
                 FROM analytics.trip
@@ -40,41 +48,23 @@ class TripRetriever:
             result = await db.execute(
                 query,
                 {
-                    "pickup": f"{pickup_keyword}%",
-                    "dropoff": f"{dropoff_keyword}%",
+                    "pickup": f"%{pickup_keyword}%",  # ✅ Fixed: added wildcards
+                    "dropoff": f"%{dropoff_keyword}%",  # ✅ Fixed: added wildcards
                     "limit": limit
                 }
             )
             rows = result.fetchall()
             
             if rows:
-                logger.info(f"✅ Found {len(rows)} vehicle types for {pickup_keyword} → {dropoff_keyword}")
-
-                return [
-                    {
-                        "vehicle_type": row[0],
-                        "avg_duration_min": row[1],
-                        "avg_distance_km": row[2],
-                        "avg_fare": row[3],
-                        "avg_rating": row[4],
-                        "trip_count": row[5]
-                    }
-                    for row in rows
-                ]
-            
-            # If not foumd, log sample data from database
-            sample_query = text("""
-                SELECT DISTINCT pickup_location, dropoff_location 
-                FROM analytics.trip 
-                WHERE status = 'Completed' 
-                LIMIT 10
-            """)
-            sample_result = await db.execute(sample_query)
-            samples = sample_result.fetchall()
-            
-            logger.info("📋 Available routes in DB:")
-            for s in samples:
-                logger.info(f"   - '{s[0]}' → '{s[1]}'")
+                routes = TripRetriever._format_results(rows)  # ✅ Fixed: use _format_results
+                
+                # Cache the results
+                await RedisService.set_route_features(
+                    pickup_keyword,
+                    dropoff_keyword,
+                    {'routes': routes, 'timestamp': datetime.now().isoformat()},
+                )
+                return routes
             
             return []
 
@@ -93,9 +83,9 @@ class TripRetriever:
                 "avg_duration_min": row[1],
                 "avg_distance_km": row[2],
                 "avg_estimated_fare": row[3],
-                "avg_actual_fare": row[4],
-                "avg_driver_rating": row[5],
-                "trip_count": row[6]
+                "avg_actual_fare": row[3],  # ✅ Fixed: avg_fare is at index 3
+                "avg_driver_rating": row[4],  # ✅ Fixed: avg_rating is at index 4
+                "trip_count": row[5]  # ✅ Fixed: trip_count is at index 5
             })
         
         return trips_data
@@ -107,7 +97,7 @@ class TripRetriever:
         dropoff_keyword: str,
         limit: int = 10
     ) -> List[Dict]:
-        """Get individual trip examples"""
+        """Get individual trip examples with fuzzy search"""
         try:
             query = text("""
                 SELECT 
@@ -121,7 +111,7 @@ class TripRetriever:
                     actual_fare,
                     driver_rating,
                     completed_at,
-                    day_of_week,
+                    EXTRACT(DOW FROM completed_at) as day_of_week
                 FROM analytics.trip
                 WHERE status = 'Completed'
                     AND LOWER(pickup_location) LIKE LOWER(CONCAT('%', :pickup, '%'))
@@ -133,8 +123,8 @@ class TripRetriever:
             result = await db.execute(
                 query,
                 {
-                    "pickup": f"{pickup_keyword}",
-                    "dropoff": f"{dropoff_keyword}",
+                    "pickup": pickup_keyword,  # ✅ Fixed: no extra f-string
+                    "dropoff": dropoff_keyword,
                     "limit": limit
                 }
             )
@@ -152,7 +142,7 @@ class TripRetriever:
                     "actual_fare": float(row[7]) if row[7] else None,
                     "rating": float(row[8]) if row[8] else None,
                     "date": row[9].isoformat() if row[9] else None,
-                    "day_of_week": row[10] if row[10] else None
+                    "day_of_week": int(row[10]) if row[10] else None
                 }
                 for row in rows
             ]
@@ -162,7 +152,7 @@ class TripRetriever:
         
     @staticmethod
     async def test_connection(db: AsyncSession) -> Dict:
-        """Test dababase connection and schema access"""
+        """Test database connection and schema access"""
         try:
             result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip"))
             count = result.scalar()
@@ -187,6 +177,14 @@ class TripRetriever:
     @staticmethod
     async def get_all_routes(db: AsyncSession) -> List[Dict]:
         """Get all unique routes for debugging and analysis"""
+
+        # Try Redis cache first
+        cached = await RedisService.get_popular_routes()
+
+        if cached:
+            logger.info("✅ Cache hit for popular routes")
+            return cached
+
         try:
             query = text("""
                 SELECT DISTINCT pickup_location, dropoff_location, ride_type, COUNT(*) as cnt
@@ -199,7 +197,7 @@ class TripRetriever:
             result = await db.execute(query)
             rows = result.fetchall()
 
-            return [
+            routes = [
                 {
                     "pickup": row[0],
                     "dropoff": row[1],
@@ -208,6 +206,12 @@ class TripRetriever:
                 }
                 for row in rows
             ]
+            
+            # Cache results
+            if routes:
+                await RedisService.set_popular_routes(routes)  # Cache for 1 hour
+            
+            return routes
 
         except Exception as e:
             logger.error(f"❌ Failed to retrieve routes: {e}", exc_info=True)
@@ -221,17 +225,27 @@ class TripRetriever:
                 SELECT ride_type, pickup_location, dropoff_location, actual_fare, duration_minutes
                 FROM analytics.trip
                 WHERE status = 'Completed'
-                AND pickup_location ILIKE '%{pickup}%'
-                AND dropoff_location ILIKE '%{dropoff}%'
+                AND pickup_location ILIKE :pickup
+                AND dropoff_location ILIKE :dropoff
                 LIMIT 5
             """)
-            result = await db.execute(query)
+            
+            result = await db.execute(
+                query,
+                {
+                    "pickup": f"%{pickup}%",
+                    "dropoff": f"%{dropoff}%"
+                }
+            )
             rows = result.fetchall()
+            
             logger.info(f"🔍 Direct query results for {pickup} → {dropoff}:")
-
-            for row in rows:
-                logger.info(f" - {row[0]}: {row[1]} → {row[2]}, fare: {row[3]}, duration: {row[4]} min")
-
+            if rows:
+                for row in rows:
+                    logger.info(f" - {row[0]}: {row[1]} → {row[2]}, fare: {row[3]}, duration: {row[4]} min")
+            else:
+                logger.info(" - No results found")
+            
             return rows
         
         except Exception as e:

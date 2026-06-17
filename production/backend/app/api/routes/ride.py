@@ -64,11 +64,17 @@ async def create_ride_with_prediction(
             rating_avg=request.rating_avg
         )
 
-        # Compute timestamps
+        # Compute timestamps∏
         ctat_minutes = prediction.get('estimated_drop_time_minute', 0.0)
         vtat_minutes = prediction.get('estimated_vehicle_arrival_minute', 0.0)
         vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_minutes)
         completed_at = booking_datetime + timedelta(minutes=ctat_minutes)
+
+        # Determine database string format for booking status
+        booking_status_val = BookingStatus.PENDING.value
+        completed_at_db = (completed_at.strftime("%Y-%m-%d %H:%M:%S")
+        if booking_status_val == BookingStatus.COMPLETED.value else "No Trip")
+
         
         # Extract ML features for database storage
         feature_dict = await _extract_ride_features(
@@ -103,8 +109,8 @@ async def create_ride_with_prediction(
             dropoff_lng=request.dropoff_lng,
             created_at=booking_datetime,
             vehicle_arrival_at=vehicle_arrival_at, # VTAT timestamp for on the ride for pickup location
-            completed_at=completed_at, # CTAT timestamp for completion for dropoff location
-            demand_pressure=request.demand_pressure
+            completed_at=completed_at_db, # CTAT timestamp for completion for dropoff location
+            demand_pressure=request.demand_pressure,
 
             **valid_features
         )
@@ -113,7 +119,7 @@ async def create_ride_with_prediction(
         db.add(new_trip)
         await db.commit()
         await db.refresh(new_trip)
-        logger.info(f"✅ Trip created: {new_trip.id} | Booking Status: {new_trip.booking_status}")
+        logger.info(f"✅ Trip created: {new_trip.ride_id} | Booking Status: {new_trip.booking_status}")
 
         return RideResponse.model_validate(new_trip)
     
@@ -133,12 +139,12 @@ async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_pg_
     # Publish to Kafka - non-blocking, won't fail the booking if kafka is down
     await kafka_producer.send_event("ride-requests", {
         "event_type": "ride_booked",
-        "ride_id": ride.id,
-        "user_id": ride.user_id,
-        "vehicle_type": ride.vehicle_type,
-        "price": ride.price,
+        "ride_id": ride.ride_id,
+        "user_id": ride.rider_id,
+        "vehicle_type": ride.ride_type,
+        "price": ride.actual_fare,
         "pickup_location": ride.pickup_location,
-        "drop_location": ride.drop_location,
+        "drop_location": ride.dropoff_location,
         "timestamp": time.time()
     });
 
@@ -202,7 +208,7 @@ async def update_ride_status(
         
         # Set completed_at if ride is completed
         if new_status == BookingStatus.COMPLETED:
-            trip.completed_at = datetime.utcnow()
+            trip.completed_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         
         await db.commit()
         await db.refresh(trip)

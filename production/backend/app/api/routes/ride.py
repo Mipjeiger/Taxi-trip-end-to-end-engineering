@@ -79,6 +79,9 @@ async def create_ride_with_prediction(
             distance_km=request.distance_km
         ) or {}
 
+        # Filter feature_dict to only include keys that match columns in the Trip model
+        valid_features = {k: v for k, v in feature_dict.items() if k in Trip.__table__.columns}
+
         # Create ride record
         new_trip = Trip(
             ride_id=f"CNR{random.randint(1000000,9999999)}",
@@ -93,6 +96,7 @@ async def create_ride_with_prediction(
             driver_rating=request.rating_avg,
             booking_status=BookingStatus.PENDING.value,
             driver_status=DriverStatus.OFFLINE.value,
+            status=BookingStatus.PENDING.value,
             pickup_lat=request.pickup_lat,
             pickup_lng=request.pickup_lng,
             dropoff_lat=request.dropoff_lat,
@@ -100,8 +104,9 @@ async def create_ride_with_prediction(
             created_at=booking_datetime,
             vehicle_arrival_at=vehicle_arrival_at, # VTAT timestamp for on the ride for pickup location
             completed_at=completed_at, # CTAT timestamp for completion for dropoff location
+            demand_pressure=request.demand_pressure
 
-            **feature_dict
+            **valid_features
         )
 
         # Store in new ride record

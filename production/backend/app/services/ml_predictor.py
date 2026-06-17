@@ -190,7 +190,7 @@ class MLPredictor:
                 vehicle_arrival_status = "coming"
 
             try:
-                customer_arrival_status = await self._calculate_customer_arrival_status(ctat_pred)
+                customer_arrival_status = await self._calculate_customer_arrival_status(ctat_pred, distance_km=distance_km)
             except Exception as e:
                 logger.error(f"❌ Customer arrival status calculation failed: {e}, using fallback.")
                 customer_arrival_status = "on_the_way"

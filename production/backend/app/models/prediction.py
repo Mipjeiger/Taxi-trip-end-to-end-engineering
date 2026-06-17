@@ -125,14 +125,18 @@ class RideCreationRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "user_id": "CID3958529",
-                "pickup_location": "Tebet Timur",
-                "drop_location": "Gondangdia",
-                "vehicle_type": "Car",
-                "distance_km": 23.72,
-                "demand_pressure": 172.875,
-                "rating_avg": 4.3,
-                "price": 414000
+                "user_id": "CID4647897",
+                "pickup_location": "Kebon Baru",
+                "drop_location": "Halim Perdana Kusuma",
+                "vehicle_type": "Go Sedan",
+                "distance_km": 39.92,
+                "demand_pressure": 690.5,
+                "rating_avg": 4,
+                "price": 335000,
+                "pickup_lat": -6.2329499,
+                "pickup_lng": 106.8614867,
+                "dropoff_lat": -6.2655682,
+                "dropoff_lng": 106.8936385,
             }
         },
         protected_namespaces=()

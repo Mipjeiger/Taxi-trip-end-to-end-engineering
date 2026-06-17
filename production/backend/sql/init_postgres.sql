@@ -179,3 +179,34 @@ FROM analytics.trip
 GROUP BY
     DATE_TRUNC('hour', created_at)
 ORDER BY hour DESC;
+
+-- Update changing name on postgres
+UPDATE analytics.trip
+SET
+    ride_type = 'Alphard'
+WHERE
+    ride_type = 'Auto';
+
+UPDATE analytics.trip
+SET
+    ride_type = 'HRV'
+WHERE
+    ride_type = 'Car';
+
+UPDATE analytics.trip
+SET
+    ride_type = 'Innova'
+WHERE
+    ride_type = 'Motorcycle';
+
+UPDATE analytics.trip
+SET
+    ride_type = 'Brio'
+WHERE
+    ride_type = 'eBike';
+
+UPDATE analytics.trip
+SET
+    ride_type = 'Terios'
+WHERE
+    ride_type = 'Uber XL';

@@ -51,7 +51,7 @@ async def predict_ride(request: PredictionRequest, ml_predictor: MLPredictor = D
 @router.post("/compare_routes")
 async def compare_routes(
     pickup_drops: list[tuple[str, str]],
-    vehicle_type: str = "Car",
+    vehicle_type: str = "HRV",
     ml_predictor: MLPredictor = Depends(get_ml_predictor)
 ):
     """

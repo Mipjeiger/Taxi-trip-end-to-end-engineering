@@ -24,17 +24,17 @@ class VehicleArrivalStatus(str, Enum):
 
 class DriverStatus(str, Enum):
     """Driver status for real-time tracking"""
-    ONLINE = "online"
-    OFFLINE = "offline"
+    ONLINE = "Online"
+    OFFLINE = "Offline"
 
 class PredictionRequest(BaseModel):
     """ML prediction request with vehicle type validation"""
     pickup_location: str
     drop_location: str
     vehicle_type: str = Field(
-        "Car",
-        pattern="^(Car|Motorcycle|Auto|Go Sedan|Premier Sedan|eBike|Uber XL)$",
-        description="One of: Car, Motorcycle, Auto, Go Sedan, Premier Sedan, eBike, Uber XL"
+        "HRV",
+        pattern="^(HRV|Innova|Alphard|Go Sedan|Premier Sedan|Brio|Terios)$",
+        description="One of: HRV, Innova, Alphard, Go Sedan, Premier Sedan, Brio, Terios"
     )
     hour: Optional[int] = Field(None, ge=0, le=23)
     day_of_week: Optional[int] = Field(None, ge=0, le=6)
@@ -81,7 +81,7 @@ class RidePredictionResponse(BaseModel):
             "example": {
                 "pickup_location": "Kali Anyar",
                 "drop_location": "Rawamangun",
-                "vehicle_type": "Car",
+                "vehicle_type": "HRV",
                 "distance_km": 39.29,
                 "booking_datetime": "2024-01-01T14:00:00",
                 "estimated_pickup_time_minute": 8.5,
@@ -110,12 +110,12 @@ class RideCreationRequest(BaseModel):
     drop_location: str
     price: float
     vehicle_type: str = Field(
-        "Car",
-        pattern="^(Car|Motorcycle|Auto|Go Sedan|Premier Sedan|eBike|Uber XL)$"
+        "HRV",
+        pattern="^(HRV|Innova|Alphard|Go Sedan|Premier Sedan|Brio|Terios)$"
     )
-    distance_km: Optional[float] = Field(10.0, gt=0)
-    demand_pressure: Optional[float] = Field(6200.0, ge=170, le=777)
-    rating_avg: Optional[float] = Field(4.5, ge=3.8, le=5.0)
+    distance_km: Optional[float] = None
+    demand_pressure: Optional[float] = None
+    rating_avg: Optional[float] = None
     price: float
     pickup_lat: float
     pickup_lng: float

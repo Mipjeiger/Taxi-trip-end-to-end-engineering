@@ -260,8 +260,8 @@ class MLPredictor:
 
         # Vehicle type encoding
         VEHICLE_TYPE_ENCODING = {
-           'Auto': 0, 'Car': 1, 'Go Sedan': 2,
-            'Motorcycle': 3, 'Premier Sedan': 4, 'eBike': 5, 'Uber XL': 6
+           'Alphard': 0, 'HRV': 1, 'Go Sedan': 2,
+            'Innova': 3, 'Premier Sedan': 4, 'Brio': 5, 'Terios': 6
         }
         vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 0)
         logger.info(f"Encoded vehicle type '{vehicle_type}' as {vehicle_encoded}")
@@ -356,53 +356,80 @@ class MLPredictor:
             self, 
             distance_km: float, 
             time_min: float, 
-            vehicle_type: str = "Car",
+            vehicle_type: str = "HRV",
             is_peak_hour: int = 0,
             is_night: int = 0,
             demand_pressure: float = 1.0,
             rating_avg: float = 4.5
     ) -> float:
-        """Calculate price basde on database features.
-        
-        Database reference:
-        - 'Booking Value': 99000-571000 IDR (actual prices)
-        - 'price_per_km': 2599-17380 IDR/km (varies by vehicle/demand)
-        - Vehicle Type distribution affects base rates
-        - Demand pressure range: 170-777 (normalized to 1.0+)
-        - Rating range: 3.8-5.0
+        """Calculate price based on real-time factors and historical databae averages.
         """
         try:
-            # Vehhicle type base multipliers (from database booking value averages)
+            # 1. Fetch dynamic base price per km from PostgreSQL database
+            dynamic_price_per_km = None
+            try:
+                from app.core.database import init_pg_db
+                from sqlalchemy import text
+
+                async for db in init_pg_db():
+                    result = await db.execute(
+                        text("""
+                            SELECT
+                            AVG(actual_fare / NULLIF(distance_km, 0))
+                            FROM analytics.trip
+                            WHERE ride_type = :vehicle_type
+                            AND distance_km > 0
+                            AND actual_fare IS NOT NULL
+                        """),
+                        {"vehicle_type": vehicle_type}
+                    )
+                    row = result.fetchone()
+                    if row and row[0] is not None:
+                        dynamic_price_per_km = float(row[0])
+                        logger.info(f"📊 Computed dynamic base price from DB: {dynamic_price_per_km:.2f} IDR/km for {vehicle_type}")
+                        break # Exit database
+
+            except Exception as e:
+                logger.warning(f"⚠️ Could not compute dynamic price from DB, using fallback for {vehicle_type}: {e}")
+
+            # 2. Vehicle type multipliers
             vehicle_multiplier = {
-                "Auto": 0.85, # Base vehicle
-                "Car": 1.0, # Standard baseline
-                "Go Sedan": 1.25, # Premium option
-                "Motorcycle": 0.70, # Budget option
-                "Premier Sedan": 1.5, # Luxury option
-                "eBike": 0.55, # Economy friendly option
-                "Uber XL": 1.35 # Large capacity option
+                "Alphard": 0.85, "HRV": 1.0, "Go Sedan": 1.25,
+                "Innova": 0.70, "Premier Sedan": 1.5, "Brio": 0.55, "Terios": 1.35
             }
-            vehicle_mult = vehicle_multiplier.get(vehicle_type, 1.0)
-            base_price_per_km = 2800 # IDR/km
-            distance_price = distance_km * base_price_per_km * vehicle_mult
+
+            # 3. COmpute base distance price
+            if dynamic_price_per_km is not None:
+                base_price_per_km = dynamic_price_per_km
+                distance_price = distance_km * base_price_per_km
+            else:
+                base_price_per_km = 2800
+                vehicle_mult = vehicle_multiplier.get(vehicle_type, 1.0)
+                distance_price = distance_km * base_price_per_km * vehicle_mult
+            
+            # 4. Standard baseline factors
             time_price = time_min * 150
             base_fare = 15000
+
+            # 5. Real-time surges (Peak hours, Night, Demand pressure, and Driver rating)
             demand_surge = 1.0 * ((demand_pressure - 250) / 500)
-            demand_surge = max(0.8, min(demand_surge, 1.8)) # Clamp to 0.8-1.8 range
+            demand_surge = max(0.8, min(demand_surge, 1.8))
             peak_surge = 1.35 if is_peak_hour else 1.0
             night_surge = 1.25 if is_night else 1.0
             rating_factor = 1.0 - ((5.0 - rating_avg) * 0.08)
             rating_factor = max(0.9, min(rating_factor, 1.5))
+            
+            # 6. Calculate final price
             final_price = (base_fare + distance_price + time_price) * \
                             peak_surge * night_surge * demand_surge * rating_factor
-            min_fare = 20000 # Minimum fare based on database lowest booking value
-            max_fare = 1000000 # Maximum fare based on database highest booking value
-
+            
+            min_fare = 20000 
+            max_fare = 1000000 
             return max(min_fare, min(final_price, max_fare))
         
         except Exception as e:
             logger.error(f"❌ Price calculation error: {e}")
-            return 50000 # Default fallback price
+            return 50000  # Default fallback price
         
     async def _calculate_vehicle_arrival_status(self, vtat_minutes: float) -> str:
         """

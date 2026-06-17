@@ -102,7 +102,7 @@ async def backfill_vehicle_arrival(batch_size: int = 500):
                     ride_id = trip[0]
                     pickup_location = trip[1]
                     dropoff_location = trip[2]
-                    ride_type = trip[3] if trip[3] else "Car"
+                    ride_type = trip[3] if trip[3] else "HRV"
                     distance_km = trip[4] if trip[4] else 10.0
                     created_at = trip[5]
                     if created_at is None:

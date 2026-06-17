@@ -324,7 +324,7 @@ async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredic
             pred = await ml_predictor.predict_ride_metrics(
                 pickup=recommendation["pickup"],
                 drop=recommendation["drop"],
-                vehicle_type=recommendation.get("vehicle_type", "Car"),
+                vehicle_type=recommendation.get("vehicle_type", "HRV"),
                 hour=datetime.now().hour,
                 day_of_week=datetime.now().weekday(),
                 distance_km=recommendation.get("distance_km", 10),

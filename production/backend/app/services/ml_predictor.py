@@ -375,11 +375,11 @@ class MLPredictor:
                     result = await db.execute(
                         text("""
                             SELECT
-                            AVG(actual_fare / NULLIF(distance_km, 0))
+                            AVG(estimated_fare)
                             FROM analytics.trip
                             WHERE ride_type = :vehicle_type
-                            AND distance_km > 0
-                            AND actual_fare IS NOT NULL
+                            AND estimated_fare > 0
+                            AND estimated_fare IS NOT NULL
                         """),
                         {"vehicle_type": vehicle_type}
                     )
@@ -392,40 +392,43 @@ class MLPredictor:
             except Exception as e:
                 logger.warning(f"⚠️ Could not compute dynamic price from DB, using fallback for {vehicle_type}: {e}")
 
-            # 2. Vehicle type multipliers
-            vehicle_multiplier = {
-                "Alphard": 0.85, "HRV": 1.0, "Go Sedan": 1.25,
-                "Innova": 0.70, "Premier Sedan": 1.5, "Brio": 0.55, "Terios": 1.35
-            }
-
-            # 3. COmpute base distance price
+            # 3. If DB value exists, use it directly (with minor real-time adjustments)
             if dynamic_price_per_km is not None:
-                base_price_per_km = dynamic_price_per_km
-                distance_price = distance_km * base_price_per_km
+               peak_surge = 1.35 if is_peak_hour else 1.0
+               night_surge = 1.25 if is_night else 1.0
+               final_price = dynamic_price_per_km * peak_surge * night_surge
             else:
+                # 3. Fallback: compute from scratch if DB is unavailable
+                vehicle_multiplier = {
+                    "Alphard": 0.85, "HRV": 1.0, "Go Sedan": 1.25,
+                    "Innova": 0.70, "Premier Sedan": 1.5, "Brio": 0.55, "Terios": 1.35
+                }
+
                 base_price_per_km = 2800
                 vehicle_mult = vehicle_multiplier.get(vehicle_type, 1.0)
                 distance_price = distance_km * base_price_per_km * vehicle_mult
-            
-            # 4. Standard baseline factors
-            time_price = time_min * 150
-            base_fare = 15000
+                time_price = time_min * 150
+                base_fare = 15000
 
-            # 5. Real-time surges (Peak hours, Night, Demand pressure, and Driver rating)
-            demand_surge = 1.0 * ((demand_pressure - 250) / 500)
-            demand_surge = max(0.8, min(demand_surge, 1.8))
-            peak_surge = 1.35 if is_peak_hour else 1.0
-            night_surge = 1.25 if is_night else 1.0
-            rating_factor = 1.0 - ((5.0 - rating_avg) * 0.08)
-            rating_factor = max(0.9, min(rating_factor, 1.5))
+                demand_surge = 1.0 * ((demand_pressure - 250) / 500)
+                demand_surge = max(0.8, min(demand_surge, 1.8))
+                peak_surge = 1.35 if is_peak_hour else 1.0
+                night_surge = 1.25 if is_night else 1.0
+                rating_factor = 1.0 - ((5.0 - rating_avg) * 0.08)
+                rating_factor = max(0.9, min(rating_factor, 1.5))
+
+                final_price = (base_fare + distance_price + time_price) * \
+                    peak_surge * night_surge * demand_surge * rating_factor
+
+                min_fare = 20000
+                max_fare = 1000000
+                return max(min_fare, min(final_price, max_fare))
+
+        except Exception as e:
+            logger.error(f"❌ Price calculation error: {e}")
+            return 50000
             
-            # 6. Calculate final price
-            final_price = (base_fare + distance_price + time_price) * \
-                            peak_surge * night_surge * demand_surge * rating_factor
-            
-            min_fare = 20000 
-            max_fare = 1000000 
-            return max(min_fare, min(final_price, max_fare))
+           
         
         except Exception as e:
             logger.error(f"❌ Price calculation error: {e}")

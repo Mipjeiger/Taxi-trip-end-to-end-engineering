@@ -29,10 +29,10 @@ from app.services.ride_service import (
 )
 from app.services.kafka_producer import kafka_producer
 from app.core.redis_client import redis_get, redis_set
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
 
 @router.post("/request", response_model=RideResponse)
 async def create_ride_with_prediction(
@@ -41,88 +41,145 @@ async def create_ride_with_prediction(
     ml_predictor: MLPredictor = Depends(get_ml_predictor)
 ):
     """
-    Create new ride with ML predictions including VTAT & CTAT Machine learning models implementation.
+    Create new ride by fetching historical averages from Completed trips in the database,
+    and enriching with ML-predicted VTAT & CTAT timestamps.
     
     Flow:
-    1. Get ML predictions (VTAT, CTAT, price)
-    2. Create ride record in database
-    3. Return ride with vehicle arrival timestamp
+    1. Query DB for avg values from Completed trips matching route + vehicle type
+    2. Get ML predictions for VTAT & CTAT timestamps only
+    3. Create ride record using DB-sourced values + ML timestamps
+    4. Return ride response
+    5. estimated_fare from EDA on DataScience which is already integrated machine learning prediction 
+    within production/backend/database/data_science_engineering.ipynb
     """
     try:
         booking_datetime = datetime.now()
         
-        # Get ML predictions
+        # 1. Fetch historical averages from Completed trips
+        result = await db.execute(
+            text("""
+                SELECT
+                    AVG(estimated_fare) AS avg_estimated_fare,
+                    AVG(actual_fare) AS avg_actual_fare,
+                    AVG(distance_km) AS avg_distance_km,
+                    AVG(duration_minutes) AS avg_duration_minutes,
+                    AVG(driver_rating) AS avg_driver_rating,
+                    AVG(demand_pressure) AS avg_demand_pressure
+                FROM analytics.trip
+                WHERE pickup_location = :pickup
+                AND dropoff_location = :dropoff
+                AND ride_type = :vehicle_type
+                AND booking_status = 'Completed'
+            """),
+            {
+                "pickup": request.pickup_location,
+                "dropoff": request.drop_location,
+                "vehicle_type": request.vehicle_type,
+            }
+        )
+        row = result.fetchone()
+
+        # Use DB averages if available, otherwise fallback to request values
+        if row and row[0] is not None:
+            estimated_fare = round(float(row[0]), 2)
+            actual_fare = round(float(row[1]), 2) if row[1] else request.price
+            distance_km = round(float(row[2]), 2) if row[2] else request.distance_km
+            duration_minutes = round(float(row[3]), 2) if row[3] else request.duration_minutes
+            driver_rating = round(float(row[4]), 2) if row[4] else request.driver_rating
+            demand_pressure = round(float(row[5]), 2) if row[5] else request.demand_pressure
+            logger.info(f"📊 DB historical match found for {request.pickup_location} → {request.drop_location} ({request.vehicle_type})")
+        else:
+            # No historical match — fall back to request input values
+            estimated_fare = request.price
+            actual_fare = request.price
+            distance_km = request.distance_km
+            duration_minutes = request.duration_minutes
+            driver_rating = request.driver_rating
+            demand_pressure = request.demand_pressure
+            logger.warning(f"⚠️ No DB match for route, using request values as fallback")
+
+        # 2. ML Predictions for VTAT & CTAT timestamps only
         prediction = await ml_predictor.predict_ride_metrics(
             pickup=request.pickup_location,
             drop=request.drop_location,
             vehicle_type=request.vehicle_type,
             hour=booking_datetime.hour,
             day_of_week=booking_datetime.weekday(),
-            distance_km=request.distance_km,
+            distance_km=distance_km,
             booking_datetime=booking_datetime,
-            demand_pressure=request.demand_pressure,
-            rating_avg=request.rating_avg
+            demand_pressure=demand_pressure,
+            rating_avg=driver_rating
         )
 
-        # Compute timestamps∏
         ctat_minutes = prediction.get('estimated_drop_time_minute', 0.0)
         vtat_minutes = prediction.get('estimated_vehicle_arrival_minute', 0.0)
         vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_minutes)
-        completed_at = booking_datetime + timedelta(minutes=ctat_minutes)
 
-        # Determine database string format for booking status
-        booking_status_val = BookingStatus.PENDING.value
-        completed_at_db = (completed_at.strftime("%Y-%m-%d %H:%M:%S")
-        if booking_status_val == BookingStatus.COMPLETED.value else "No Trip")
+        # 3. Determine booking status from DB history
+        status_result = await db.execute(
+            text("""
+                SELECT booking_status, driver_status, status
+                FROM analytics.trip
+                WHERE pickup_location = :pickup
+                    AND dropoff_location = :dropoff
+                    AND ride_type = :vehicle_type
+                    AND booking_status = 'Completed'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {
+                "pickup": request.pickup_location,
+                "dropoff": request.drop_location,
+                "vehicle_type": request.vehicle_type
+            }
+        )
+        status_row = status_result.fetchone()
 
-        
-        # Extract ML features for database storage
-        feature_dict = await _extract_ride_features(
-            pickup=request.pickup_location,
-            drop=request.drop_location,
-            vehicle_type=request.vehicle_type,
-            booking_datetime=booking_datetime,
-            distance_km=request.distance_km
-        ) or {}
+        if status_row:
+            booking_status = status_row[0] # "Completed"
+            driver_status = status_row[1] # e.g. "Online"
+            status = status_row[2] # e.g. "Completed"
+            completed_at = (booking_datetime + timedelta(minutes=ctat_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            booking_status = BookingStatus.PENDING.value
+            driver_status = DriverStatus.OFFLINE.value
+            status = BookingStatus.PENDING.value
+            completed_at = "No Trip"
 
-        # Filter feature_dict to only include keys that match columns in the Trip model
-        valid_features = {k: v for k, v in feature_dict.items() if k in Trip.__table__.columns}
-
-        # Create ride record
+        # 4. Create ride record with DB sourced values
         new_trip = Trip(
             ride_id=f"CNR{random.randint(1000000,9999999)}",
             rider_id=request.user_id,
             pickup_location=request.pickup_location,
             dropoff_location=request.drop_location,
             ride_type=request.vehicle_type,
-            estimated_fare=prediction.get('estimated_price_idr'),
-            actual_fare=request.price,
-            distance_km=request.distance_km,
-            duration_minutes=ctat_minutes,
-            driver_rating=request.rating_avg,
-            booking_status=BookingStatus.PENDING.value,
-            driver_status=DriverStatus.OFFLINE.value,
-            status=BookingStatus.PENDING.value,
+            estimated_fare=estimated_fare,
+            actual_fare=actual_fare,
+            distance_km=distance_km,
+            duration_minutes=duration_minutes,
+            driver_rating=driver_rating,
+            booking_status=booking_status,
+            driver_status=driver_status,
+            status=status,
             pickup_lat=request.pickup_lat,
             pickup_lng=request.pickup_lng,
             dropoff_lat=request.dropoff_lat,
             dropoff_lng=request.dropoff_lng,
             created_at=booking_datetime,
-            vehicle_arrival_at=vehicle_arrival_at, # VTAT timestamp for on the ride for pickup location
-            completed_at=completed_at_db, # CTAT timestamp for completion for dropoff location
-            demand_pressure=request.demand_pressure,
-
-            **valid_features
+            vehicle_arrival_at=vehicle_arrival_at,
+            completed_at=completed_at,
+            demand_pressure=demand_pressure,
+            day_of_week=booking_datetime.weekday(),
+            hour=booking_datetime.hour,
         )
-
-        # Store in new ride record
+            
         db.add(new_trip)
         await db.commit()
         await db.refresh(new_trip)
-        logger.info(f"✅ Trip created: {new_trip.ride_id} | Booking Status: {new_trip.booking_status}")
+        logger.info(f"✅ Trip created: {new_trip.ride_id} | Status: {new_trip.booking_status}")
 
         return RideResponse.model_validate(new_trip)
-    
+
     except Exception as e:
         await db.rollback()
         logger.error(f"❌ Trip creation failed: {str(e)}")

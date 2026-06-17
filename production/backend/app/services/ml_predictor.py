@@ -2,7 +2,7 @@ from ctypes import Union
 import pandas as pd
 import numpy as np
 import pickle
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 from pathlib import Path
 from datetime import datetime, timedelta
 from app.core.redis_client import redis_get, redis_set

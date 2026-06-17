@@ -267,12 +267,32 @@ def transform_data(**context):
                 df["completed_at"] = None
 
             # For vehicle_arrival_at: except 'completed' set to Timestamp
-            df["vehicle_arrival_at"] = df.apply(lambda row: "2026-01-01 00:00:00" 
-            if str(row["booking_status"]).strip() != "Completed" else row["vehicle_arrival_at"], axis=1)
+            def format_vehicle_arrival_at(row):
+                if str(row["booking_status"]).strip() != "Completed":
+                    return "2026-01-01 00:00:00"
+                
+                val = row.get("vehicle_arrival_at")
+                if pd.isna(val):
+                    return None
+                if hasattr(val, "strftime"):
+                    return val.strftime("%Y-%m-%d %H:%M:%S")
+                
+                return str(val)
+            df["vehicle_arrival_at"] = df.apply(format_vehicle_arrival_at, axis=1) # Applied function to column
 
             # For completed_at: except 'completed' set to No Trip
-            df["completed_at"] = df.apply(lambda row: "No Trip" 
-            if str(row["booking_status"]).strip() != "Completed" else row["completed_at"], axis=1)
+            def format_completed_at(row):
+                if str(row["booking_status"]).strip() != "Completed":
+                    return "No Trip"
+
+                val = row.get("completed_at")
+                if pd.isna(val):
+                    return None
+                if hasattr(val, "strftime"):
+                    return val.strftime("%Y-%m-%d %H:%M:%S")
+                
+                return str(val)
+            df["completed_at"] = df.apply(format_completed_at, axis=1) # Applied function to column
 
         # FIX 2: estimated_fare population + empty string cleaning
         # The source parquet stores missing fares as empty strings (""),
@@ -456,7 +476,7 @@ def load_to_postgres(**context):
             with conn.cursor() as cur:
                 for _, row in df_insert.iterrows():
                     # Only include non-None values in INSERT
-                    cols = [c for c in insert_cols if row.get(c) is not None]
+                    cols = [c for c in insert_cols if row.get(c) is not None and not pd.isna(row.get(c))]
                     vals = [row[c] for c in cols]
 
                     if not cols:

@@ -1,4 +1,4 @@
--- Active: 1780295933317@@127.0.0.1@5433@taxi_db
+-- Active: 1781591252887@@localhost@5433@taxi_db
 -- DuckDB Analytics Schema (Local Tables)
 -- PostgreSQL schema for analytics
 CREATE SCHEMA IF NOT EXISTS analytics;
@@ -174,11 +174,8 @@ GROUP BY
 
 -- View 3: Hourly ride trends
 CREATE VIEW analytics.hourly_ride_trends AS
-SELECT
-    DATE_TRUNC ('hour', created_at) as hour,
-    COUNT(*) as ride_count,
-    AVG(actual_fare) as avg_fare
+SELECT DATE_TRUNC('hour', created_at) as hour, COUNT(*) as ride_count, AVG(actual_fare) as avg_fare
 FROM analytics.trip
 GROUP BY
-    DATE_TRUNC ('hour', created_at)
+    DATE_TRUNC('hour', created_at)
 ORDER BY hour DESC;

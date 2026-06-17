@@ -14,6 +14,8 @@ services:
       interval: 10s 
       timeout: 5s
       retries: 5
+    depends_on:
+      - redisinsight
     networks:
       - taxi_trip_network
 
@@ -23,9 +25,6 @@ services:
     container_name: redisinsight
     ports:
       - "5540:5540"
-    depends_on:
-      redis:
-        condition: service_healthy
     volumes:
       - redisinsight_data:/data
     networks:

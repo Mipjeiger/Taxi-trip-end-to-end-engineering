@@ -186,26 +186,80 @@ async def create_ride_with_prediction(
         raise HTTPException(status_code=500, detail=f"Failed to create trip: {str(e)}")
     
 @router.post("/rides/book")
-async def book_ride(payload: RideBookRequest, db: AsyncSession = Depends(get_pg_db)):
-    try:
-        ride = await create_ride_in_db(db, **payload.model_dump())
-    except Exception as e:
-        logger.error(f"Error booking ride: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def book_ride(
+    payload: RideBookRequest,
+    db: AsyncSession = Depends(get_pg_db)
+):
+    """
+    Book a ride with ML predictions.
     
-    # Publish to Kafka - non-blocking, won't fail the booking if kafka is down
-    await kafka_producer.send_event("ride-requests", {
-        "event_type": "ride_booked",
-        "ride_id": ride.ride_id,
-        "user_id": ride.rider_id,
-        "vehicle_type": ride.ride_type,
-        "price": ride.actual_fare,
-        "pickup_location": ride.pickup_location,
-        "drop_location": ride.dropoff_location,
-        "timestamp": time.time()
-    });
-
-    return ride
+    Expected payload includes:
+    - user_id: Customer ID
+    - pickup_location/drop_location: Route locations
+    - vehicle_type: Type of vehicle
+    - price: Estimated price
+    - estimated_pickup_time_minute: VTAT (vehicle arrival time)
+    - estimated_drop_time_minute: CTAT (total ride time)
+    - pickup_encoded/drop_encoded: Encoded locations for ML
+    - route_cluster: Route cluster ID
+    - ride_distance: Distance in km
+    - pickup_lat/lon/drop_lat/lon: Coordinates
+    """
+    try:
+        # Create ride in database using all fields from payload
+        ride = await create_ride_in_db(
+            db=db,
+            user_id=payload.user_id,
+            pickup_location=payload.pickup_location,
+            drop_location=payload.drop_location,
+            vehicle_type=payload.vehicle_type,
+            price=payload.price,
+            estimated_pickup_time_minute=payload.estimated_pickup_time_minute,
+            estimated_drop_time_minute=payload.estimated_drop_time_minute,
+            pickup_encoded=payload.pickup_encoded,
+            drop_encoded=payload.drop_encoded,
+            route_cluster=payload.route_cluster,
+            ride_distance=payload.ride_distance,
+            pickup_lat=payload.pickup_lat,
+            pickup_lon=payload.pickup_lon,
+            drop_lat=payload.drop_lat,
+            drop_lon=payload.drop_lon
+        )
+        
+        # Publish to Kafka (non-blocking)
+        try:
+            await kafka_producer.send_event("ride-requests", {
+                "event_type": "ride_booked",
+                "ride_id": ride.ride_id,
+                "user_id": ride.rider_id,
+                "vehicle_type": ride.ride_type,
+                "price": ride.actual_fare,
+                "pickup_location": ride.pickup_location,
+                "drop_location": ride.dropoff_location,
+                "estimated_pickup_time_minute": payload.estimated_pickup_time_minute,
+                "estimated_drop_time_minute": payload.estimated_drop_time_minute,
+                "vehicle_arrival_at": ride.vehicle_arrival_at.isoformat() if ride.vehicle_arrival_at else None,
+                "completed_at": ride.completed_at.isoformat() if ride.completed_at else None,
+                "timestamp": time.time()
+            })
+        except Exception as e:
+            logger.warning(f"⚠️ Kafka event failed (non-blocking): {e}")
+        
+        # Return ride details
+        return {
+            "success": True,
+            "ride_id": ride.ride_id,
+            "booking_status": ride.booking_status,
+            "vehicle_arrival_at": ride.vehicle_arrival_at,
+            "completed_at": ride.completed_at,
+            "estimated_pickup_time_minute": payload.estimated_pickup_time_minute,
+            "estimated_drop_time_minute": payload.estimated_drop_time_minute,
+            "message": "Ride booked successfully"
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Error booking ride: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to book ride: {str(e)}")
 
 @router.get("/rides/history/{user_id}")
 async def ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_pg_db)):
@@ -318,113 +372,3 @@ async def get_stats_by_status(db: AsyncSession = Depends(get_pg_db)):
     except Exception as e:
         logger.error(f"Error fetching stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/stats/vtat_analysis")
-async def vtat_analysis(db: AsyncSession = Depends(get_pg_db)):
-    """Analyze VTAT predictions vs actual arrival times"""
-    try:
-        # FIXED: Query based on estimated_pickup_time_minute instead of vtat
-        query = select(Trip).where(Trip.estimated_pickup_time_minute.isnot(None))
-        result = await db.execute(query)
-        trips_with_vtat = result.scalars().all()
-        
-        if not trips_with_vtat:
-            return {"message": "No VTAT data available"}
-        
-        # Calculate statistics
-        vtat_minutes = []
-        for trip in trips_with_vtat:
-            vtat_minutes.append(trip.estimated_pickup_time_minute)
-        
-        if vtat_minutes:
-            vtat_array = np.array(vtat_minutes)
-            return {
-                "total_predictions": len(vtat_minutes),
-                "vtat_statistics": {
-                    "mean_minutes": float(np.mean(vtat_array)),
-                    "median_minutes": float(np.median(vtat_array)),
-                    "std_dev": float(np.std(vtat_array)),
-                    "min_minutes": float(np.min(vtat_array)),
-                    "max_minutes": float(np.max(vtat_array))
-                }
-            }
-        else:
-            return {"message": "Unable to calculate VTAT statistics"}
-    
-    except Exception as e:
-        logger.error(f"Error analyzing VTAT: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Helper function
-async def _extract_ride_features(
-    pickup: str,
-    drop: str,
-    vehicle_type: str,
-    booking_datetime: datetime,
-    distance_km: float
-) -> dict:
-    """Extract ML features for database storage"""
-    try:
-        hour = booking_datetime.hour
-        day_of_week = booking_datetime.weekday()
-        
-        # Time-based features
-        is_peak_hour = 1 if (7 <= hour <= 9 or 17 <= hour <= 19) else 0
-        is_weekend = 1 if day_of_week >= 5 else 0
-        is_night = 1 if hour >= 22 or hour < 5 else 0
-        
-        # Cyclical encoding
-        hour_sin = np.sin(2 * np.pi * hour / 24)
-        hour_cos = np.cos(2 * np.pi * hour / 24)
-        day_sin = np.sin(2 * np.pi * day_of_week / 7)
-        day_cos = np.cos(2 * np.pi * day_of_week / 7)
-        
-        return {
-            "pickup_encoded": hash(pickup) % 1000,
-            "drop_encoded": hash(drop) % 1000,
-            "hour": hour,
-            "day_of_week": day_of_week,
-            "route_cluster": hash(f"{pickup}_{drop}") % 100,
-            "ride_distance": distance_km,
-            "is_peak_hour": is_peak_hour,
-            "is_weekend": is_weekend,
-            "is_night": is_night,
-            "hour_sin": hour_sin,
-            "hour_cos": hour_cos,
-            "day_sin": day_sin,
-            "day_cos": day_cos
-        }
-    
-    except Exception as e:
-        logger.warning(f"Error extracting features: {e}, using defaults")
-        return {
-            "pickup_encoded": 0,
-            "drop_encoded": 0,
-            "hour": 0,
-            "day_of_week": 0,
-            "route_cluster": 0,
-            "ride_distance": distance_km,
-            "is_peak_hour": 0,
-            "is_weekend": 0,
-            "is_night": 0,
-            "hour_sin": 0.0,
-            "hour_cos": 1.0,
-            "day_sin": 0.0,
-            "day_cos": 1.0
-        }
-    
-async def get_or_encode_location(location: str, loc_type: str = "pickup") -> int:
-    """Cache location encoding in Redis to avoid recomputation"""
-    cache_key = f"loc_enc:{loc_type}:{location.lower()}"
-    cached = await redis_get(cache_key)
-    
-    if cached:
-        return int(cached)
-    
-    # Fallback to hash encoding location matcher
-    encoded = abs(hash(location)) % 1000
-    await redis_set(cache_key, str(encoded), expire=86400)
-
-    return encoded

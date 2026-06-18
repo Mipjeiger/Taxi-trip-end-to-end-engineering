@@ -172,13 +172,14 @@ class RideResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 class RideBookRequest(BaseModel):
+    """Request to book a ride with all required fields"""
     user_id: str
     pickup_location: str
     drop_location: str
     vehicle_type: str
     price: float
-    estimated_pickup_time_minute: float
-    estimated_drop_time_minute: float
+    estimated_pickup_time_minute: float  # VTAT
+    estimated_drop_time_minute: float    # CTAT
     pickup_encoded: int
     drop_encoded: int
     route_cluster: int
@@ -187,3 +188,26 @@ class RideBookRequest(BaseModel):
     pickup_lon: float
     drop_lat: float
     drop_lon: float
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "user_id": "CID123456",
+                "pickup_location": "Senen",
+                "drop_location": "Malaka Jaya",
+                "vehicle_type": "Go Sedan",
+                "price": 75000,
+                "estimated_pickup_time_minute": 10.5,
+                "estimated_drop_time_minute": 25.3,
+                "pickup_encoded": 42,
+                "drop_encoded": 18,
+                "route_cluster": 7,
+                "ride_distance": 12.5,
+                "pickup_lat": -6.1754,
+                "pickup_lon": 106.8272,
+                "drop_lat": -6.2186,
+                "drop_lon": 106.8501
+            }
+        },
+        protected_namespaces=()
+    )

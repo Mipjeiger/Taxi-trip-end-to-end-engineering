@@ -80,7 +80,7 @@ def populate_drivers(**context):
                 ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY ride_type), 1) as percentage
             FROM analytics.trip
             WHERE driver_rating IS NOT NULL
-                AND ride_type IS NO TNULL
+                AND ride_type IS NOT NULL
                 AND status = 'Completed'
             GROUP BY ride_type, driver_rating
             ORDER BY ride_type, driver_rating DESC

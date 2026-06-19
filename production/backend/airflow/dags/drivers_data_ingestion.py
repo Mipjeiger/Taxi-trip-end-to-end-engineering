@@ -73,85 +73,134 @@ def populate_drivers(**context):
 
         # Check which vehicle types are missing
         cursor.execute("""
-            SELECT DISTINCT ride_type 
-            FROM analytics.trip 
-            WHERE driver_rating IS NOT NULL 
-              AND ride_type IS NOT NULL 
-              AND status = 'Completed'
-              AND ride_type NOT IN (
-                  SELECT DISTINCT vehicle_type FROM analytics.drivers
-              )
+           SELECT
+                ride_type,
+                driver_rating,
+                COUNT(*) as trip_count,
+                ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY ride_type), 1) as percentage
+            FROM analytics.trip
+            WHERE driver_rating IS NOT NULL
+                AND ride_type IS NO TNULL
+                AND status = 'Completed'
+            GROUP BY ride_type, driver_rating
+            ORDER BY ride_type, driver_rating DESC
         """)
-        missing_types = cursor.fetchall()
+        rating_distribution = cursor.fetchall()
         
-        if not missing_types:
+        if not rating_distribution: 
             logger.info(f"✅ All vehicle types already have drivers. Skipping.")
             conn.close()
             return {"status": "skipped", "count": count}
         
-        logger.info(f"📊 Missing vehicle types: {[row[0] for row in missing_types]}")
-        
-        # Generate drivers ONLY for missing vehicle types
-        for row in missing_types:
-            vehicle_type = row[0]
-            logger.info(f"🔄 Creating driver for vehicle type: {vehicle_type}")
-            
-            # Check if this vehicle type already has a driver
-            cursor.execute(
-                "SELECT COUNT(*) FROM analytics.drivers WHERE vehicle_type = %s",
-                (vehicle_type,)
-            )
-            exists = cursor.fetchone()[0]
-            
-            if exists > 0:
-                logger.info(f"✅ Driver for {vehicle_type} already exists. Skipping.")
-                continue
-            
-            # Insert driver for this vehicle type
-            query = """
-            INSERT INTO analytics.drivers (driver_id, name, vehicle_type, plate,
-                rating, total_trips, status, lat, lng)
-            SELECT
-                CONCAT('DRV', LPAD((
-                    SELECT COALESCE(MAX(CAST(SUBSTRING(driver_id, 4) AS INTEGER)), 0) + 1
-                    FROM analytics.drivers
-                )::TEXT, 3, '0')) as driver_id,
-                CONCAT('Driver ', %(vehicle_type)s) as name,
-                %(vehicle_type)s as vehicle_type,
-                CONCAT('B ',
-                        LPAD(FLOOR(RANDOM() * 10000)::TEXT, 4, '0'),
-                        ' ',
-                        CHR(65 + FLOOR(RANDOM() * 26)::INT),
-                        CHR(65 + FLOOR(RANDOM() * 26)::INT)) as plate,
-                ROUND(AVG(driver_rating)::NUMERIC, 1) as rating,
-                COUNT(*) as total_trips,
-                'online' as status,
-                -6.17 + (RANDOM() - 0.5) * 0.05 as lat,
-                106.82 + (RANDOM() - 0.5) * 0.05 as lng
-            FROM analytics.trip
-            WHERE driver_rating IS NOT NULL
-                AND ride_type = %(vehicle_type)s
-                AND status = 'Completed'
-            GROUP BY ride_type
-            """
+        # Clear existing drivers to start fresh
+        logger.info("🧹 Clearing existing drivers table...")
+        cursor.execute("TRUNCATE TABLE analytics.drivers CASCADE")
+        conn.commit()
 
-            cursor.execute(query, {"vehicle_type": vehicle_type})
-            conn.commit()
+        # Track which vehicle types we've processed
+        processed_types = set()
+        driver_counter = 0
+        
+        # Create drivers based on rating distribution
+        for row in rating_distribution:
+            ride_type = row[0]
+            rating = row[1]
+            trip_count = row[2]
+            percentage = row[3]
+
+            # Dtermine how many drivers to create per rating
+            if percentage >= 30: # Major rating (e.g. 4.2, 4.3)
+                num_drivers = 2
+            elif percentage >= 15: # Moderate rating (e.g., 4.6)
+                num_drivers = 1
+            else:
+                num_drivers = 1  # Minor rating (e.g. 3.7, 4.9)
             
-            logger.info(f"✅ Created driver for {vehicle_type}")
+            # Ensure have at least 1 driver per vehicle type
+            if ride_type not in processed_types:
+                num_drivers = max(num_drivers, 1)
+
+            # Create drivers for this rating
+            for i in range(num_drivers):
+                driver_counter += 1
+                driver_id = f"DRV{str(driver_counter).zfill(3)}"
+
+                # Generate realistic driver names
+                first_names = ["Ahmad", "Budi", "Jaka", "Dedi", "Eka", "Fajar", "Gita", 
+                               "Hendra", "Indah", "Joko", "Dedi", "Lukman", "Muhammad", 
+                               "Nugroho", "Oscar", "Putra", "Rizki", "Zaki", "Taufik", "Wijaya"]
+                
+                last_names = ["Rizki", "Santoso", "Deni", "Firmansyah", "Putra", "Pratama", 
+                              "Kusuma", "Wijaya", "Permata", "Susilo", "Satrio", "Hakim", 
+                              "Angga", "Aji", "Setiawan", "Nugroho", "Hidayat", "Lesmana"]
+            
+                name = f"{random.choice(first_names)}{random.choice(last_names)}"
+
+                # Generate plate number
+                plate = f"B{random.randint(1000, 9999)}{random.choice(['AB', 'CD', 'EF', 'GH', 'IJ', 'KL', 'MN', 'OP', 'QR', 'ST', 'UV', 'WX', 'YZ'])}"
+
+                # Generate random location near Jakarta (latitude and longitude)
+                lat = -6.17 + (random.random() - 0.5) * 0.05
+                lng = 106.82 + (random.random() - 0.5) * 0.05
+
+                # Calculate total trips for the driver based on rating distribution
+                total_trips = max(50, int(trip_count * (0.5 + random.random() * 0.5)))  # Randomize between 50% to 100% of trip_count
+
+                # Insert driver into the database
+                insert_query = """
+                    INSERT INTO analytics.drivers (
+                    driver_id, name, vehicle_type, plate,
+                    rating, total_trips, status, lat, lng
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+
+                cursor.execute(insert_query, (
+                    driver_id,
+                    name,
+                    ride_type,
+                    plate,
+                    rating,
+                    total_trips,
+                    'online',
+                    lat,
+                    lng
+                ))
+                logger.info(f"🚗 Created driver {driver_id} ({name}) for vehicle type {ride_type} with rating {rating}")
+
+            processed_types.add(ride_type)
+        
+        conn.commit()
+        logger.info(f"✅ Successfully populated drivers table with {driver_counter} drivers.")
 
         # Get final count
         cursor.execute("SELECT COUNT(*) FROM analytics.drivers")
         new_count = cursor.fetchone()[0]
 
-        logger.info(f"✅ Drivers table now has {new_count} records.")
+        # Show distribution
+        cursor.execute("""
+            SELECT vehicle_type, COUNT(*) as count, AVG(rating) as avg_rating
+            FROM analytics.drivers
+            GROUP BY vehicle_type
+            ORDER BY vehicle_type
+        """)
+
+        distribution = cursor.fetchall()
+        logger.info("📊 Final drivers distribution:")
+
+        for row in distribution:
+            logger.info(f"Vehicle Type: {row[0]}, Count: {row[1]}, Avg Rating: {row[2]:.2f}")
+        logger.info(f"📊 Total drivers after population: {new_count}")
+        # Close connection
         conn.close()
 
-        return {"status": "success", "new_count": new_count}
+        return {
+            "status": "success",
+            "new_count": new_count,
+        }
     
     except Exception as e:
-        logger.error(f"Failed to populate drivers table: {str(e)}")
-        raise
+        logger.error(f"❌ Error populating drivers: {str(e)}")
+        raise 
 
 populate_task = PythonOperator(
     task_id="populate_drivers",

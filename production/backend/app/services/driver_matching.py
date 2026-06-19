@@ -70,7 +70,7 @@ class DriverMatchingService:
                     lng
                 FROM analytics.drivers
                 WHERE status = 'online'
-                AND vehicle_type = :vehicle_type
+                    AND vehicle_type = :vehicle_type
                 ORDER BY rating DESC, total_trips DESC
                 LIMIT 1
             """)
@@ -103,102 +103,61 @@ class DriverMatchingService:
                 # If still no driver, try to create one from trip data
                 if not driver:
                     logger.info(f"ℹ️ No online drivers available, creating driver from trip data for {vehicle_type}")
+                    return await DriverMatchingService._find_mock_driver(
+                        vehicle_type, pickup_location, dropoff_location, ride_id, db
+                    )
+                
+                # Calculate ETA
+                eta_minutes = 2 + (abs(hash(pickup_location)) % 10)
+                vehicle_arrival_at = datetime.now() + timedelta(minutes=eta_minutes)
                     
-                    # Try to create a driver from trip data
-                    create_query = text("""
-                        INSERT INTO analytics.drivers (driver_id, name, vehicle_type, plate,
-                                        rating, total_trips, status, lat, lng)
-                        SELECT
-                            CONCAT('DRV', LPAD(ROW_NUMBER() OVER (PARTITION BY ride_type ORDER BY driver_rating DESC)::TEXT, 3, '0')) as driver_id,
-                            CONCAT('Driver ', ride_type, ' ', ROW_NUMBER() OVER (PARTITION BY ride_type ORDER BY driver_rating DESC)) as name,
-                            ride_type as vehicle_type,
-                            CONCAT('B ', 
-                                LPAD(FLOOR(RANDOM() * 10000)::TEXT, 4, '0'), 
-                                ' ', 
-                                CHR(65 + FLOOR(RANDOM() * 26)::INT), 
-                                CHR(65 + FLOOR(RANDOM() * 26)::INT)
-                            ) as plate,
-                            ROUND(AVG(driver_rating), 1) as rating,
-                            COUNT(*) as total_trips,
-                            'online' as status,
-                            -6.17 + (RANDOM() - 0.5) * 0.05 as lat,
-                            106.82 + (RANDOM() - 0.5) * 0.05 as lng
-                        FROM analytics.trip
-                        WHERE driver_rating IS NOT NULL
-                            AND ride_type = :vehicle_type
-                            AND status = 'Completed'
-                        GROUP BY ride_type
-                        LIMIT 1
-                    """)
+                # Try to create a driver from trip data
+                update_query = text("""
+                    UPDATE analytics.trip
+                    SET
+                        driver_status = 'Online',
+                        driver_rating = :driver_rating,
+                        vehicle_arrival_at = :vehicle_arrival_at
+                    WHERE ride_id = :ride_id
+                """)
 
-                    await db.execute(create_query, {"vehicle_type": vehicle_type})
-                    await db.commit()
+                await db.execute(update_query, {
+                    "driver_rating": driver[4],
+                    "vehicle_arrival_at": vehicle_arrival_at,
+                    "ride_id": ride_id
+                })
+                await db.commit()
 
-                    # Try again to find the newly created driver
-                    result = await db.execute(query, {"vehicle_type": vehicle_type})
-                    driver = result.fetchone()
-                    
-                    if driver:
-                        logger.info(f"✅ Created new driver for {vehicle_type} from trip data")
-
-            # If still no driver, use mock fallback
-            if not driver:
-                logger.warning(f"⚠️ No drivers available in database, using mock driver")
-                return await DriverMatchingService._find_mock_driver(
-                    vehicle_type, pickup_location, dropoff_location, ride_id, db
-                )
-            
-            # Calculate ETA based on distance (simplified)
-            eta_minutes = 2 + (abs(hash(pickup_location)) % 10)
-            vehicle_arrival_at = datetime.now() + timedelta(minutes=eta_minutes)
-            
-            # Update ride - SET driver_status to 'Online' (driver assigned)
-            update_query = text("""
-                UPDATE analytics.trip 
-                SET 
-                    driver_status = 'Online',
-                    driver_rating = :driver_rating,
-                    vehicle_arrival_at = :vehicle_arrival_at
-                WHERE ride_id = :ride_id
-            """)
-            
-            await db.execute(update_query, {
-                "driver_rating": driver[4],
-                "vehicle_arrival_at": vehicle_arrival_at,
-                "ride_id": ride_id
-            })
-            await db.commit()
-            
-            # Mark driver as busy (so they won't be assigned another ride)
-            update_driver_query = text("""
-                UPDATE analytics.drivers 
-                SET 
-                    status = 'busy',
-                    last_active_at = :now,
-                    updated_at = :now
-                WHERE driver_id = :driver_id
-            """)
-            
-            await db.execute(update_driver_query, {
-                "driver_id": driver[0],
-                "now": datetime.now()
-            })
-            await db.commit()
-            
-            logger.info(f"✅ Driver {driver[1]} assigned to ride {ride_id} (status: Online)")
-            
-            return {
-                "driver_id": driver[0],
-                "name": driver[1],
-                "vehicle": driver[2],
-                "plate": driver[3],
-                "rating": driver[4],
-                "trips": driver[5],
-                "status": "Online",
-                "lat": driver[7],
-                "lng": driver[8],
-                "eta_minutes": eta_minutes
-            }
+                # Mark driver as busy (so they won't be assigned another ride)
+                update_driver_query = text("""
+                    UPDATE analytics.drivers 
+                    SET 
+                        status = 'busy',
+                        last_active_at = :now,
+                        updated_at = :now
+                    WHERE driver_id = :driver_id
+                """)
+                
+                await db.execute(update_driver_query, {
+                    "driver_id": driver[0],
+                    "now": datetime.now()
+                })
+                await db.commit()
+                
+                logger.info(f"✅ Driver {driver[1]} assigned to ride {ride_id} (status: Online)")
+                
+                return {
+                    "driver_id": driver[0],
+                    "name": driver[1],
+                    "vehicle": driver[2],
+                    "plate": driver[3],
+                    "rating": driver[4],
+                    "trips": driver[5],
+                    "status": "Online",
+                    "lat": driver[7],
+                    "lng": driver[8],
+                    "eta_minutes": eta_minutes
+                }
             
         except Exception as e:
             logger.error(f"❌ Error finding driver: {e}")

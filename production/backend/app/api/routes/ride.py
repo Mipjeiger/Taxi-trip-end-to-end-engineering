@@ -5,7 +5,7 @@ import json
 import numpy as np
 import random
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 
@@ -28,8 +28,7 @@ from app.services.ride_service import (
     get_ride_history
 )
 from app.services.kafka_producer import kafka_producer
-from app.core.redis_client import redis_get, redis_set
-from sqlalchemy import text
+from app.services.driver_matching import DriverMatchingService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -225,6 +224,24 @@ async def book_ride(
             drop_lat=payload.drop_lat,
             drop_lon=payload.drop_lon
         )
+
+        # Match driver to the ride (async, non-blocking)
+        try:
+            driver = await DriverMatchingService.find_driver(
+                db=db,
+                pickup_location=payload.pickup_location,
+                dropoff_location=payload.drop_location,
+                vehicle_type=payload.vehicle_type,
+                ride_id=ride.ride_id
+            )
+
+            if driver:
+                logger.info(f"✅ Driver {driver['driver_id']} matched for ride {ride.ride_id}")
+            else:
+                logger.warning(f"⚠️ No driver found for ride {ride.ride_id}")
+
+        except Exception as e:
+            logger.error(f"❌ Driver matching failed for ride {ride.ride_id}: {str(e)}")
         
         # Publish to Kafka (non-blocking)
         try:
@@ -250,6 +267,7 @@ async def book_ride(
             "success": True,
             "ride_id": ride.ride_id,
             "booking_status": ride.booking_status,
+            "driver_status": ride.driver_status,
             "vehicle_arrival_at": ride.vehicle_arrival_at,
             "completed_at": ride.completed_at,
             "estimated_pickup_time_minute": payload.estimated_pickup_time_minute,
@@ -260,19 +278,218 @@ async def book_ride(
     except Exception as e:
         logger.error(f"❌ Error booking ride: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to book ride: {str(e)}")
+    
+@router.post("/rides/{ride_id}/match-driver")
+async def match_driver_to_ride(
+    ride_id: str,
+    db: AsyncSession = Depends(get_pg_db)
+):
+    """
+    Match a driver to a ride.
+    This would be called after booking to assign a driver.
+    """
+    try:
+        # Check if ride exists
+        check_query = text("""
+            SELECT ride_id, booking_status, pickup_location, dropoff_location, ride_type
+            FROM analytics.trip
+            WHERE ride_id = :ride_id
+        """)
+        result = await db.execute(check_query, {"ride_id": ride_id})
+        ride = result.fetchone()
+
+        if not ride:
+            raise HTTPException(status_code=404, detail=f"Ride {ride_id} not found")
+        
+        # Find driver
+        driver = await DriverMatchingService.find_driver(
+            db=db,
+            pickup_location=ride[2],
+            dropoff_location=ride[3],
+            vehicle_type=ride[4],
+            ride_id=ride_id
+        )
+
+        if not driver:
+            return {
+                "success": False,
+                "message": "No drivers available at the moment. Please try again.",
+                "ride_id": ride_id
+                }
+        
+        return {
+            "success": True,
+            "ride_id": ride_id,
+            "driver": driver,
+            "message": f"Driver {driver['name']} assigned to your ride"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error matching driver: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to match driver: {str(e)}")
+    
+@router.get("/rides/{ride_id}/status")
+async def get_ride_status(
+    ride_id: str,
+    db: AsyncSession = Depends(get_pg_db)
+):
+    """
+    Get ride status with driver info.
+    """
+    try:
+        status = await DriverMatchingService.get_ride_status(db, ride_id)
+        return status
+    except Exception as e:
+        logger.error(f"❌ Error getting ride status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting ride status: {str(e)}")
+    
+@router.post("/rides/{ride_id}/complete")
+async def complete_ride(
+    ride_id: str,
+    db: AsyncSession = Depends(get_pg_db)
+):
+    """
+    Complete a ride.
+    """
+    try:
+        success = await DriverMatchingService.complete_ride(db, ride_id)
+        if success:
+            return {
+                "success": True,
+                "ride_id": ride_id,
+                "message": "Ride completed successfully"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to complete ride")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error completing ride: {e}")
+        raise HTTPException(status_code=500, detail=f"Error completing ride: {str(e)}")
+        
+@router.post("/rides/{ride_id}/cancel")
+async def cancel_ride(
+    ride_id: str,
+    db: AsyncSession = Depends(get_pg_db)
+):
+    """
+    Cancel a ride.
+    """
+    try:
+        success = await DriverMatchingService.cancel_ride(db, ride_id)
+        if success:
+            return {
+                "success": True,
+                "ride_id": ride_id,
+                "message": "Ride cancelled successfully"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to cancel ride")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error cancelling ride: {e}")
+        raise HTTPException(status_code=500, detail=f"Error cancelling ride: {str(e)}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error completing ride: {e}")
+        raise HTTPException(status_code=500, detail=f"Error completing ride: {str(e)}")
 
 @router.get("/rides/history/{user_id}")
-async def ride_history(user_id: str, limit: int = 100, db: AsyncSession = Depends(get_pg_db)):
+async def ride_history(
+    user_id: str,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_pg_db)
+):
     """
-    This 500 endpoint - now uses ride_service
-    which queries only columns that actually exist in the DB"""
+    Get ride history for a user.
+    """
     try:
-        rides = await get_ride_history(db, user_id, limit)
-        return rides
+        query = text("""
+            SELECT 
+                ride_id,
+                pickup_location,
+                dropoff_location,
+                ride_type,
+                booking_status,
+                created_at,
+                completed_at,
+                actual_fare,
+                distance_km,
+                duration_minutes,
+                driver_rating
+            FROM analytics.trip
+            WHERE rider_id = :user_id
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """)
+        
+        result = await db.execute(query, {"user_id": user_id, "limit": limit})
+        rows = result.fetchall()
+        
+        return {
+            "user_id": user_id,
+            "total_rides": len(rows),
+            "rides": [
+                {
+                    "ride_id": row[0],
+                    "pickup_location": row[1],
+                    "dropoff_location": row[2],
+                    "vehicle_type": row[3],
+                    "booking_status": row[4],
+                    "created_at": row[5].isoformat() if row[5] else None,
+                    "completed_at": row[6].isoformat() if row[6] else None,
+                    "fare": float(row[7]) if row[7] else 0,
+                    "distance_km": float(row[8]) if row[8] else 0,
+                    "duration_minutes": float(row[9]) if row[9] else 0,
+                    "driver_rating": float(row[10]) if row[10] else None
+                }
+                for row in rows
+            ]
+        }
+        
     except Exception as e:
         logger.error(f"Error fetching ride history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/rides/stats")
+async def get_ride_stats(db: AsyncSession = Depends(get_pg_db)):
+    """
+    Get ride statistics.
+    """
+    try:
+        query = text("""
+            SELECT 
+                COUNT(*) as total_rides,
+                AVG(actual_fare) as avg_fare,
+                AVG(distance_km) as avg_distance,
+                AVG(duration_minutes) as avg_duration,
+                COUNT(CASE WHEN booking_status = 'Completed' THEN 1 END) as completed_rides,
+                COUNT(CASE WHEN booking_status = 'Cancelled by Customer' THEN 1 END) as cancelled_rides
+            FROM analytics.trip
+        """)
+        
+        result = await db.execute(query)
+        row = result.fetchone()
+        
+        return {
+            "total_rides": row[0],
+            "avg_fare": float(row[1]) if row[1] else 0,
+            "avg_distance": float(row[2]) if row[2] else 0,
+            "avg_duration": float(row[3]) if row[3] else 0,
+            "completed_rides": row[4],
+            "cancelled_rides": row[5]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching ride stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{ride_id}", response_model=RideResponse)
 async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_pg_db)):

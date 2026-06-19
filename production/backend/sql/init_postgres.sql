@@ -90,16 +90,18 @@ SELECT * FROM analytics.trip;
 -- Table 3: Driver profiles
 -- ================================================================
 DROP TABLE IF EXISTS analytics.drivers;
-
 CREATE TABLE IF NOT EXISTS analytics.drivers (
     driver_id VARCHAR PRIMARY KEY,
-    name VARCHAR,
-    vehicle VARCHAR,
-    rating DOUBLE PRECISION,
-    status VARCHAR,
+    name VARCHAR NOT NULL,
+    vehicle_type VARCHAR NOT NULL,
+    plate VARCHAR NOT NULL,
+    rating FLOAT DEFAULT 4.5,
+    total_trips INTEGER DEFAULT 0,
+    status VARCHAR DEFAULT 'offline',  -- ✅ Default: not available
+    lat DOUBLE PRECISION,
+    lng DOUBLE PRECISION,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    vehicle_arrival_at TIMESTAMP,
-    completed_at TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 SELECT * FROM analytics.drivers;

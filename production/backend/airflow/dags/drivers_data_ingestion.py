@@ -106,22 +106,19 @@ def populate_drivers(**context):
             ride_type = row[0]
             rating = row[1]
             trip_count = row[2]
-            percentage = row[3]
+            percentage = float(row[3])
 
-            # Dtermine how many drivers to create per rating
-            if percentage >= 30: # Major rating (e.g. 4.2, 4.3)
-                num_drivers = 2
-            elif percentage >= 15: # Moderate rating (e.g., 4.6)
-                num_drivers = 1
-            else:
-                num_drivers = 1  # Minor rating (e.g. 3.7, 4.9)
+            # Scaling data with MATH BASED
+            threshold = 0.3 # 30% of trips for a rating is considered major
+            num_drivers = float(percentage * threshold) # Scale number of drivers based on percentage of trips for that rating
+            num_drivers = max(num_drivers, 1)
             
             # Ensure have at least 1 driver per vehicle type
             if ride_type not in processed_types:
                 num_drivers = max(num_drivers, 1)
 
             # Create drivers for this rating
-            for i in range(num_drivers):
+            for i in range(int(num_drivers)):
                 driver_counter += 1
                 driver_id = f"DRV{str(driver_counter).zfill(3)}"
 
@@ -190,6 +187,7 @@ def populate_drivers(**context):
         for row in distribution:
             logger.info(f"Vehicle Type: {row[0]}, Count: {row[1]}, Avg Rating: {row[2]:.2f}")
         logger.info(f"📊 Total drivers after population: {new_count}")
+
         # Close connection
         conn.close()
 

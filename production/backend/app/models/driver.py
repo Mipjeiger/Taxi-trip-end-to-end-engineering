@@ -1,24 +1,26 @@
-# app/models/driver.py
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, String, Float, Integer, DateTime, CheckConstraint
+from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 
 Base = declarative_base()
 
 class Driver(Base):
     __tablename__ = "drivers"
+    __table_args__ = {"schema": "analytics"}
 
-    id           = Column(Integer, primary_key=True)
-    name         = Column(String, nullable=False)
-    phone        = Column(String, nullable=False)
+    driver_id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
     vehicle_type = Column(String, nullable=False)
-    vehicle_plate= Column(String, nullable=False)
-    rating       = Column(Float, default=5.0)
-    is_online    = Column(Boolean, default=False)
-    current_lat  = Column(Float, nullable=True)
-    current_lng  = Column(Float, nullable=True)
-    total_trips  = Column(Integer, default=0)
-    created_at   = Column(DateTime, default=datetime.utcnow)
+    plate = Column(String, nullable=False)
+    rating = Column(Float, default=4.5)
+    total_trips = Column(Integer, default=0)
+    status = Column(String, default='offline')  # offline, online, busy, on_break, inactive
+    lat = Column(Float)
+    lng = Column(Float)
+    last_online_at = Column(DateTime)
+    last_active_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.now(datetime.timezone.utc))
+    updated_at = Column(DateTime, default=datetime.now(datetime.timezone.utc), onupdate=datetime.now(datetime.timezone.utc))
 
-    def to_dict(self):
-        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+    def __repr__(self):
+        return f"<Driver(driver_id={self.driver_id}, name={self.name}, status={self.status})>"

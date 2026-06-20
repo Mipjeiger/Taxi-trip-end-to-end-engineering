@@ -1,4 +1,6 @@
--- Active: 1780295933317@@127.0.0.1@5433@taxi_db
+
+
+-- Active: 1781591252887@@localhost@5433@taxi_db
 -- DuckDB Analytics Schema (Local Tables)
 -- PostgreSQL schema for analytics
 CREATE SCHEMA IF NOT EXISTS analytics;
@@ -38,17 +40,6 @@ ALTER TABLE analytics.trip
 ADD COLUMN demand_pressure DOUBLE PRECISION;
 
 ALTER TABLE analytics.trip ADD COLUMN hour INTEGER;
-
--- Add new columns feature by ingestion new features
-ALTER TABLE analytics.trip
-ADD COLUMN IF NOT EXISTS pickup_encoded INTEGER,
-ADD COLUMN IF NOT EXISTS drop_encoded INTEGER,
-ADD COLUMN IF NOT EXISTS route_cluster INTEGER;
-
--- add new columns for VTAT and CTAT in minutes
-ALTER TABLE analytics.trip
-ADD COLUMN IF NOT EXISTS vtat_minutes FLOAT,
-ADD COLUMN IF NOT EXISTS ctat_minutes FLOAT;
 
 CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id VARCHAR PRIMARY KEY,
@@ -90,6 +81,7 @@ SELECT * FROM analytics.trip;
 -- Table 3: Driver profiles
 -- ================================================================
 DROP TABLE IF EXISTS analytics.drivers;
+TRUNCATE TABLE analytics.drivers;
 CREATE TABLE IF NOT EXISTS analytics.drivers (
     driver_id VARCHAR PRIMARY KEY,
     name VARCHAR NOT NULL,
@@ -193,6 +185,11 @@ GROUP BY
     DATE_TRUNC('hour', created_at)
 ORDER BY hour DESC;
 
+-- Data analyst to define which aren't Completed Trip
+SELECT booking_status, completed_at, vehicle_arrival_at
+FROM analytics.trip
+WHERE booking_status != 'Completed';
+
 -- Update changing name on postgres
 UPDATE analytics.trip
 SET
@@ -247,10 +244,82 @@ WHERE vehicle_arrival_at IS NULL
 
 -- 3. Backfill pickup_encoded, drop_encoded, route_cluster
 -- Using hash-based encoding (consistent with your ML pipeline)
-
 UPDATE analytics.trip 
 SET 
     pickup_encoded = ABS(hashtext(COALESCE(pickup_location, ''))) % 1000,
     drop_encoded = ABS(hashtext(COALESCE(dropoff_location, ''))) % 1000,
     route_cluster = ABS(hashtext(COALESCE(pickup_location, '') || '|' || COALESCE(dropoff_location, ''))) % 100
 WHERE pickup_encoded IS NULL;
+
+SELECT booking_status, pickup_location, dropoff_location, ride_type, driver_status, driver_rating FROM analytics.trip
+WHERE booking_status = 'Pending';
+
+SELECT pickup_location, dropoff_location FROM analytics.trip LIMIT 65;
+
+-- SQL database scaling
+DROP TABLE analytics.data_retrieves;
+CREATE TABLE IF NOT EXISTS analytics.data_retrieves (
+	ride_id VARCHAR PRIMARY KEY,
+	driver_id VARCHAR,
+	vehicle_type VARCHAR,
+	drop_location VARCHAR,
+	pickup_location VARCHAR,
+	price_per_ride DOUBLE PRECISION,
+	booking_status VARCHAR,
+	driver_rating DOUBLE PRECISION
+);
+
+-- insert to analytics.data_retrieves DB
+INSERT INTO analytics.data_retrieves (
+	ride_id,
+    driver_id, 
+    vehicle_type, 
+    drop_location, 
+    pickup_location, 
+    price_per_ride, 
+    booking_status, 
+    driver_rating
+)
+SELECT DISTINCT ON (t.ride_id) -- Ensure each ride_id is only processed ONCE
+	t.ride_id,
+    d.driver_id,
+    d.vehicle_type,
+    t.dropoff_location,
+    t.pickup_location,
+    t.actual_fare,
+    t.booking_status,
+    t.driver_rating
+FROM 
+    analytics.trip t
+JOIN
+	analytics.drivers d ON LOWER(t.driver_status) = d.status;
+	-- Note: This matches 'online' from drivers with 'Online' from trips
+
+-- Inner join to fetch botch database are inserting driver_name
+SELECT
+	dr.driver_id,
+	d.name AS driver_name, -- join driver name from drivers DB
+	dr.vehicle_type,
+	dr.pickup_location,
+	dr.drop_location,
+	dr.price_per_ride,
+	dr.booking_status,
+	dr.driver_rating
+FROM
+	analytics.drivers d
+JOIN
+	analytics.data_retrieves dr ON d.driver_id = dr.driver_id;
+	-- Note: data_retieves define as dr to join dr on d as driver
+
+-- select data
+SELECT * FROM analytics.data_retrieves;
+
+------------------------------------------------------------
+-- Select data
+SELECT * FROM analytics.trip;
+
+SELECT * FROM analytics.drivers;
+
+SELECT * FROM analytics.llm_interactions;
+
+SELECT * FROM analytics.taxi_trip_data_events

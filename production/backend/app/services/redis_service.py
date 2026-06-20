@@ -2,6 +2,7 @@ import json
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
+
 from app.core.redis_client import redis_get, redis_set, redis_delete, get_redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -13,13 +14,14 @@ Centralizes all Redis operations for consistency.
 logger = logging.getLogger(__name__)
 
 # Cache key constants
-CACHE_VERSION = "v1"
+CACHE_VERSION = "v2" # Increment version to invalidate old cache
 CACHE_KEYS = {
     "ROUTE_FEATURES": f"route_features:{CACHE_VERSION}:{{pickup}}:{{dropoff}}",
     "LOCATION_ENCODING": f"loc_enc:{CACHE_VERSION}:{{loc_type}}:{{location}}",
     "VTAT_PREDICTION": f"vtat_pred:{CACHE_VERSION}:{{ride_id}}",
     "POPULAR_ROUTES": f"popular_routes:{CACHE_VERSION}",
     "VEHICLE_TYPES": f"vehicle_types:{CACHE_VERSION}",
+    "DRIVER_AVAILABILITY": f"driver_availability:{CACHE_VERSION}:{{location}}",
     "ROUTE_VALIDATION": f"route_validation:{CACHE_VERSION}:{{pickup}}:{{dropoff}}",
 }
 
@@ -29,6 +31,9 @@ class RedisService:
     @staticmethod
     async def get_route_features(pickup: str, dropoff: str) -> Optional[Dict]:
         """Get cached route features"""
+        if not pickup or not dropoff:
+            return None
+
         key = CACHE_KEYS["ROUTE_FEATURES"].format(pickup=pickup, dropoff=dropoff)
         data = await redis_get(key)
 
@@ -45,14 +50,28 @@ class RedisService:
                 # Check if cache is stale (older than 6 hours)
                 timestamp = parsed.get("timestamp")
                 if timestamp:
-                    cache_time = datetime.fromisoformat(timestamp)
-                    if datetime.now() - cache_time > timedelta(hours=6):
-                        logger.info(f"🔄 Cache stale for {pickup} → {dropoff}, refreshing")
-                        await redis_delete(key)
+                    try:
+                        cache_time = datetime.fromisoformat(timestamp)
+                        if datetime.now() - cache_time > timedelta(hours=6):
+                            logger.info(f"🔄 Cache stale for {pickup} → {dropoff}, refreshing")
+                        
                         return None
                     
-                logger.info(f"✅ Cache hit for {pickup} → {dropoff}")
-                return parsed.get("features")
+                    except ValueError:
+                        logger.warning(f"⚠️ Invalid timestamp in cache for key {key}: {timestamp}")
+                        return None
+                    
+                # Verify the data matches the requested route
+                cached_pickup = parsed.get('pickup', '').lower()
+                cached_dropoff = parsed.get('dropoff', '').lower()
+
+                if cached_pickup != pickup.lower().strip() or cached_dropoff != dropoff.lower().strip():
+                    logger.warning(f"⚠️ Cache route mismatch for key {key}: expected {pickup} → {dropoff}, got {cached_pickup} → {cached_dropoff}")
+                    await redis_delete(key)
+                    return None
+                    
+                logger.info(f"✅ Valid cache hit for {pickup} → {dropoff} ({len(parsed.get('routes', []))} routes)")
+                return parsed.get('routes', [])
             
             except (json.JSONDecodeError, KeyError, ValueError) as e:
                 logger.error(f"❌ Error parsing cached route data for key {key}: {e}")
@@ -80,7 +99,7 @@ class RedisService:
                 return False
             
             # Check required fields in valid route
-            required_fields = ['vehicle_type', 'trip_count']
+            required_fields = ['vehicle_type']
             for field in required_fields:
                 if field not in route:
                     return False
@@ -98,15 +117,26 @@ class RedisService:
         Cache route features with validation and expiration.
         Only caches if data is valid.
         """
+        if not pickup or not dropoff:
+            logger.error("❌ Pickup and dropoff locations must be provided")
+            return False
+
         # Validate data before caching
         if not RedisService._validate_route_data(features):
             logger.error(f"❌ Invalid data structure for {pickup} → {dropoff}, not caching")
+            return False
+        
+        # Don't cache empty results (prevents hallucination)
+        if not features.get('routes'):
+            logger.info(f"⚠️ No valid routes to cache for {pickup} → {dropoff}")
             return False
         
         # Add timestamp for freshness tracking
         features['timestamp'] = datetime.now().isoformat()
         features['pickup'] = pickup
         features['dropoff'] = dropoff
+        features['source'] = 'database'
+        features['version'] = CACHE_VERSION
         
         key = CACHE_KEYS["ROUTE_FEATURES"].format(pickup=pickup, dropoff=dropoff)
         
@@ -116,6 +146,57 @@ class RedisService:
             return True
         except Exception as e:
             logger.error(f"❌ Failed to cache route data: {e}")
+            return False
+
+    @staticmethod
+    async def get_driver_availability(vehicle_type: str) -> Optional[List[Dict]]:
+        """Get cached driver availability for a vehicle type"""
+        key = CACHE_KEYS["DRIVER_AVAILABILITY"].format(location=vehicle_type.lower())
+        data = await redis_get(key)
+
+        if data:
+            try:
+                parsed = json.loads(data)
+
+                # Validate structure
+                if not isinstance(parsed, list):
+                    await redis_delete(key)
+                    return None
+                
+                # Validate each driver
+                for driver in parsed:
+                    if not isinstance(driver, dict) or 'driver_id' not in driver:
+                        await redis_delete(key)
+                        return None
+                    
+                return parsed
+                
+            except json.JSONDecodeError:
+                await redis_delete(key)
+                return None
+            
+        return None
+    
+    @staticmethod
+    async def set_driver_availability(vehicle_type: str, drivers: List[Dict], ttl: int = 300) -> bool:
+        """Cached driver availability for a vehicle type"""
+        if not vehicle_type or not drivers:
+            return False
+        
+        # Validate drivers
+        for driver in drivers:
+            if not isinstance(driver, dict) or 'driver_id' not in driver:
+                logger.error(f"❌ Invalid driver data for vehicle type {vehicle_type}: {driver}")
+                return False
+            
+        key = CACHE_KEYS["DRIVER_AVAILABILITY"].format(location=vehicle_type.lower())
+
+        try:
+            await redis_set(key, json.dumps(drivers), expire=ttl)
+            logger.info(f"✅ Cached availability for {len(drivers)} drivers of type {vehicle_type} (TTL: {ttl}s)")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to cache driver availability: {e}")
             return False
 
     @staticmethod
@@ -197,7 +278,7 @@ class RedisService:
     async def invalidate_route_cache(pickup: str = None, dropoff: str = None):
         """Safely invalidate cache entries"""
         if pickup and dropoff:
-            key = CACHE_KEYS["ROUTE_FEATURES"].format(pickup=pickup, dropoff=dropoff)
+            key = CACHE_KEYS["ROUTE_FEATURES"].format(pickup=pickup.lower().strip(), dropoff=dropoff.lower().strip())
             await redis_delete(key)
             logger.info(f"🗑️ Invalidated cache for {pickup} → {dropoff}")
         else:
@@ -298,11 +379,14 @@ class RedisService:
             # Get cached data
             cached = await RedisService.get_route_features(pickup, dropoff)
             
-            if cached is None:
+            # If database has trips but cache says none, invalidate cache
+            if db_count > 0 and cached is None:
+                logger.warning(f"⚠️ Cache mismatch for {pickup} → {dropoff}, invalidating")
+                await RedisService.invalidate_route_cache(pickup, dropoff)
                 return False
             
-            # If database has trips but cache says none, invalidate cache
-            if db_count > 0 and not cached:
+            # If cache has data but database has no trips (stale cache)
+            if db_count == 0 and cached is not None:
                 logger.warning(f"⚠️ Cache mismatch for {pickup} → {dropoff}, invalidating")
                 await RedisService.invalidate_route_cache(pickup, dropoff)
                 return False

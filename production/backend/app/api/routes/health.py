@@ -1,6 +1,7 @@
 import logging
 from fastapi import APIRouter, Depends
 from app.services.redis_service import redis_service
+from app.core.database import get_pg_db
 from app.core.postgres_db import get_postgres_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text

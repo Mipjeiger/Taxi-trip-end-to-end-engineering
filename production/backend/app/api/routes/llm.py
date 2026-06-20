@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.core.postgres_db import get_postgres_db
+from app.core.database import get_pg_db
 from app.core.qdrant_client import qdrant_vector_db
 from app.core.evidently_monitor import evidently_monitor
 from app.services.llm_services import llm_service, LLMService
@@ -88,7 +89,6 @@ class PriceQuestionRequest(BaseModel):
 # ===============================================================
 # Chat Endpoint
 # ===============================================================
-
 @router.post("/chat")
 async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_postgres_db)):
     """Generate Chat endpoint with LLM, Qdrant vector search, and Evidently monitoring."""
@@ -104,22 +104,170 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
         pickup = None
         dropoff = None
 
-        # Pattern 1: "from X to Y" or "dari X ke Y"
-        pattern = r"(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)"
-        match = re.search(pattern, user_message, re.IGNORECASE)
+        # Get all known locations from the database
+        async def get_known_locations(db: AsyncSession) -> tuple:
+            """Get known pickup and dropoff locations from database."""
+            try:
+                pickup_query = text("""
+                    SELECT DISTINCT pickup_location
+                    FROM analytics.trip
+                    WHERE pickup_location IS NOT NULL
+                    AND status = 'Completed'
+                    LIMIT 100
+                """)
+                dropoff_query = text("""
+                    SELECT DISTINCT dropoff_location
+                    FROM analytics.trip
+                    WHERE dropoff_location IS NOT NULL
+                    AND status = 'Completed'
+                    LIMIT 100
+                """)
 
-        if match:
-            pickup = match.group(1).strip()
-            dropoff = match.group(2).strip()
-        else:
-            # Pattern 2: "X to Y"
-            pattern2 = r"([^?\.]+?)\s+(?:to|ke)\s+([^?\.]+)"
-            match2 = re.search(pattern2, user_message, re.IGNORECASE)
-            if match2:
-                pickup = match2.group(1).strip()
-                dropoff = match2.group(2).strip()
+                pickup_result = await db.execute(pickup_query)
+                dropoff_result = await db.execute(dropoff_query)
+
+                pickup_locations = [row[0].lower() for row in pickup_result.fetchall() if row[0]]
+                dropoff_locations = [row[0].lower() for row in dropoff_result.fetchall() if row[0]]
+
+                return pickup_locations, dropoff_locations
+            
+            except Exception as e:
+                logger.error(f"❌ Failed to get known locations: {e}")
+                return [], []
+            
+        # Get known locations (cache this in a global variable or use Redis)
+        known_pickups, known_dropoffs = await get_known_locations(db)
+
+        # Clean the user message - remove common question phrases
+        cleaned_message = user_message.lower()
+
+        # Remove common question words and phrases
+        common_prefixes = [
+            'what is', 'what\'s', 'how to', 'how do i', 'tell me', 'i want', 
+            'show me', 'find', 'get', 'need', 'looking for', 'fastest', 'best',
+            'cheapest', 'quickest', 'route', 'way', 'trip', 'travel', 'go'
+        ]
+        for prefix in common_prefixes:
+            cleaned_message = re.sub(rf'^{prefix}\s+', '', cleaned_message, flags=re.IGNORECASE)
+
+        cleaned_message = re.sub(r'\s+in\s+jakarta$', '', cleaned_message, flags=re.IGNORECASE)
+        cleaned_message = re.sub(r'\s+jakarta$', '', cleaned_message, flags=re.IGNORECASE)
+
+        # Pattern 1: "from X to Y" or "dari X ke Y"
+        def find_location_in_text(text: str, known_locations: List) -> str:
+            """Find a known locations in the text."""
+            text_lower = text.lower()
+            best_match = None
+            best_position = len(text_lower)
+            best_length = 0
+
+            for loc in known_locations:
+                if loc and loc in text_lower:
+                    pos = text_lower.find(loc)
+                    # Prefer matches that are earlier in the text and longer
+                    if pos < best_position or (pos == best_position and len(loc) > best_length):
+                        best_position = pos
+                        best_length = len(loc)
+                        best_match = loc
+
+            return best_match
+
+        # Strategy 2: Use regex patterns from "X to Y"
+        patterns = [r'(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)',
+                    r'([^?\.]+?)\s+(?:to|ke)\s+([^?\.]+)',
+                    r'(?:between|antara)\s+([^a]+?)\s+(?:and|dan)\s+([^?\.]+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, cleaned_message, re.IGNORECASE)
+
+            if match:
+                potential_pickup = match.group(1).strip()
+                potential_dropoff = match.group(2).strip()
+
+                # Clean potential locations
+                for common in ['from', 'dari', 'to', 'ke', 'the', 'a', 'an']:
+                    potential_pickup = re.sub(rf'^{common}\s+', '', potential_pickup, flags=re.IGNORECASE)
+                    potential_dropoff = re.sub(rf'^{common}\s+', '', potential_dropoff, flags=re.IGNORECASE)
+
+                # Check if these match known locations
+                pickup_match = find_location_in_text(potential_pickup, known_pickups)
+                dropoff_match = find_location_in_text(potential_dropoff, known_dropoffs)
+
+                if pickup_match and dropoff_match:
+                    pickup = pickup_match
+                    dropoff = dropoff_match
+                    break  # Found valid pickup and dropoff, exit loop
+                elif pickup_match:
+                    pickup = pickup_match
+                    remaining = cleaned_message.replace(potential_pickup, '')
+                    dropoff_match = find_location_in_text(remaining, known_dropoffs)
+
+                    if dropoff_match:
+                        dropoff = dropoff_match
+                        break
+            
+
+        # Strategy 3: if still not found, try to find any two known locations
+        if not pickup or not dropoff:
+            # Find all known locations in the text
+            found_locations = []
+            seen = set()
+            for loc in known_pickups + known_dropoffs:
+                if loc and loc in cleaned_message and loc not in seen:
+                    found_locations.append((cleaned_message.find(loc), loc))
+                    seen.add(loc)
+
+            # Sort by position in text
+            found_locations.sort()
+
+            if len(found_locations) >= 2:
+                # First location is pickup, second is dropoff
+                pickup = found_locations[0][1]
+                dropoff = found_locations[1][1]
+
+        # Strategy 4: Last resort - use simple patern matching
+        if not pickup or not dropoff:
+            simple_pattern = r'(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)'
+            simple_match = re.search(simple_pattern, cleaned_message, re.IGNORECASE)
+            if simple_match:
+                pickup = simple_match.group(1).strip()
+                dropoff = simple_match.group(2).strip()
+
+                # Clean up
+                for common in ['from', 'dari', 'to', 'ke', 'the']:
+                    pickup = re.sub(rf'^{common}\s+', '', pickup, flags=re.IGNORECASE)
+                    dropoff = re.sub(rf'^{common}\s+', '', dropoff, flags=re.IGNORECASE)
+
+        # Final cleanup
+        if pickup:
+            # Remove extra words
+            pickup = re.sub(r'^(from|dari|at|near|in|the|fast|route|best)\s+', '', pickup, flags=re.IGNORECASE)
+            pickup = pickup.strip()
+            # Remove "in jakarta" suffix
+            pickup = re.sub(r'\s+in\s+jakarta$', '', pickup, flags=re.IGNORECASE)
+            # Take first part if comma or period
+            pickup = pickup.split(',')[0].strip()
+            pickup = pickup.split('.')[0].strip()
+            # Limit length
+            if len(pickup) > 50:
+                pickup = pickup[:50]
+
+        if dropoff:
+            dropoff = re.sub(r'^(to|ke|at|near|in|the|destination|fast|route|best)\s+', '', dropoff, flags=re.IGNORECASE)
+            dropoff = dropoff.strip()
+            dropoff = re.sub(r'\s+in\s+jakarta$', '', dropoff, flags=re.IGNORECASE)
+            dropoff = dropoff.split(',')[0].strip()
+            dropoff = dropoff.split('.')[0].strip()
+            if len(dropoff) > 50:
+                dropoff = dropoff[:50]
+
+        if pickup and dropoff and pickup == dropoff:
+            logger.warning(f"⚠️ Pickup and dropoff are the same: '{pickup}'")
+            dropoff = None  # Reset dropoff if same as pickup
 
         logger.info(f"📍 Extracted locations: pickup='{pickup}', dropoff='{dropoff}'")
+
 
         # ============================================================
         # STEP 2: Test Database connection (handle both dict and bool)
@@ -312,7 +460,6 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
 # ===============================================================
 # Other Endpoints
 # ===============================================================
-
 @router.post("/recommend-route")
 async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredictor = Depends(get_ml_predictor)):
     """Get route recommendation from natural language query."""

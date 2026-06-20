@@ -54,11 +54,11 @@ class RedisService:
                         cache_time = datetime.fromisoformat(timestamp)
                         if datetime.now() - cache_time > timedelta(hours=6):
                             logger.info(f"🔄 Cache stale for {pickup} → {dropoff}, refreshing")
-                        
-                        return None
+    
+                            return None
                     
                     except ValueError:
-                        logger.warning(f"⚠️ Invalid timestamp in cache for key {key}: {timestamp}")
+                        logger.error(f"❌ Invalid timestamp format in cache for key {key}: {timestamp}")
                         return None
                     
                 # Verify the data matches the requested route
@@ -138,12 +138,17 @@ class RedisService:
         features['source'] = 'database'
         features['version'] = CACHE_VERSION
         
-        key = CACHE_KEYS["ROUTE_FEATURES"].format(pickup=pickup, dropoff=dropoff)
+        key = CACHE_KEYS["ROUTE_FEATURES"].format(
+            pickup=pickup.lower(), 
+            dropoff=dropoff.lower()
+        )
         
         try:
-            await redis_set(key, json.dumps(features), expire=ttl)
-            logger.info(f"✅ Cached valid route data for {pickup} → {dropoff} (TTL: {ttl}s)")
-            return True
+            success = await redis_set(key, json.dumps(features), expire=ttl)
+            if success:
+                logger.info(f"✅ Cached {len(features.get('routes', []))} routes for {pickup} → {dropoff}")
+            return success
+        
         except Exception as e:
             logger.error(f"❌ Failed to cache route data: {e}")
             return False
@@ -395,6 +400,7 @@ class RedisService:
             
         except Exception as e:
             logger.error(f"❌ Cache validation failed: {e}")
+            await db.rollback()
             return False
         
     @staticmethod

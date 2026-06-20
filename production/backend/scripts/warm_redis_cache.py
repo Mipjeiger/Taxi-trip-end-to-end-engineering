@@ -9,7 +9,6 @@ backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 
 from app.core.postgres_db import get_postgres_db
-from app.core.database import get_pg_db
 from app.services.redis_service import RedisService
 from app.services.trip_retriever import TripRetriever
 from sqlalchemy import text
@@ -33,6 +32,7 @@ async def warm_cache():
                 SELECT 
                     pickup_location,
                     dropoff_location,
+                    ride_type,
                     COUNT(*) as trip_count,
                     AVG(duration_minutes) as avg_duration,
                     AVG(actual_fare) as avg_fare,
@@ -41,9 +41,8 @@ async def warm_cache():
                 WHERE status = 'Completed'
                     AND pickup_location IS NOT NULL
                     AND dropoff_location IS NOT NULL    
-                GROUP BY pickup_location, dropoff_location
+                GROUP BY pickup_location, dropoff_location, ride_type
                 ORDER BY trip_count DESC
-                LIMIT 50
             """)
 
             result = await db.execute(query)
@@ -57,16 +56,17 @@ async def warm_cache():
             for route in routes:
                 pickup = route[0]
                 dropoff = route[1]
-                trip_count = route[2]
-                avg_duration = float(route[3]) if route[3] else None
-                avg_fare = float(route[4]) if route[4] else None
-                avg_rating = float(route[5]) if route[5] else None
+                ride_type = route[2]
+                trip_count = route[3]
+                avg_duration = float(route[4]) if route[4] else None
+                avg_fare = float(route[5]) if route[5] else None
+                avg_rating = float(route[6]) if route[6] else None
 
                 # Build route features
                 features = {
                     "routes": [
                         {
-                            "vehicle_type": "Multiple",
+                            "vehicle_type": ride_type,
                             "avg_duration_min": avg_duration,
                             "avg_actual_fare": avg_fare,
                             "avg_driver_rating": avg_rating,
@@ -92,6 +92,7 @@ async def warm_cache():
                     "trip_count": trip_count,
                     "avg_fare": avg_fare,
                     "avg_duration": avg_duration,
+                    "vehicle_type": ride_type
                 })
 
             # cache popular routes list in Redis

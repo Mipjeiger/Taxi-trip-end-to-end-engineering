@@ -4,21 +4,41 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
 from app.services.redis_service import redis_service
+from sqlalchemy import text
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 class TripRetriever:
+
+    @staticmethod
+    async def test_db_connection(db: AsyncSession) -> Dict:
+        """Test DB connection using get_postgres_db and a simple query"""
+        try:
+            result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip"))
+            count = result.scalar()
+
+            result = await db.execute(text("SELECT COUNT(*) FROM analytics.trip WHERE status = 'Completed'"))
+            completed = result.scalar()
+
+            return {
+                "connected": True,
+                "total_trips": count,
+                "completed_trips": completed,
+                "message": f"✅ Successfully connected to DB. Total trips: {count}, Completed trips: {completed}"
+            }
+        
+        except Exception as e:
+            logger.error(f"❌ Database connection failed: {e}", exc_info=True)
+            return {
+                "connected": False,
+                "error": str(e),
+                "message": f"❌ Failed to connect to DB: {e}"
+            }
     
     @staticmethod
     async def get_all_routes(db: AsyncSession, limit: int = 20) -> List[Dict]:
         """Get all unique routes for debugging and analysis with Redis caching"""
-        
-        # Try Redis cache first
-        cached = await redis_service.get_popular_routes()
-        if cached:
-            logger.info("✅ Cache hit for popular routes")
-            return cached[:limit]
         
         try:
             query = text("""
@@ -27,8 +47,8 @@ class TripRetriever:
                     dropoff_location,
                     ride_type,
                     COUNT(*) as trip_count,
-                    ROUND(AVG(actual_fare), 0) as avg_fare,
-                    ROUND(AVG(duration_minutes), 1) as avg_duration
+                    ROUND(AVG(actual_fare)::numeric, 0) as avg_fare,
+                    ROUND(AVG(duration_minutes)::numeric, 1) as avg_duration
                 FROM analytics.trip
                 WHERE status = 'Completed'
                     AND pickup_location IS NOT NULL
@@ -53,15 +73,9 @@ class TripRetriever:
                 for row in rows
             ]
             
-            # Cache results
-            if routes:
-                await redis_service.set_popular_routes(routes)
-                logger.info(f"✅ Cached {len(routes)} popular routes")
-            
-            return routes
-            
         except Exception as e:
             logger.error(f"❌ Failed to get routes: {e}")
+            await db.rollback()
             return []
 
     @staticmethod
@@ -102,10 +116,10 @@ class TripRetriever:
             query = text("""
                 SELECT 
                     ride_type,
-                    ROUND(AVG(duration_minutes), 1) as avg_duration,
-                    ROUND(AVG(distance_km), 1) as avg_distance,
-                    ROUND(AVG(actual_fare), 2) as avg_fare,
-                    ROUND(AVG(driver_rating), 1) as avg_rating,
+                    ROUND(AVG(duration_minutes)::numeric, 1) as avg_duration,
+                    ROUND(AVG(distance_km)::numeric, 1) as avg_distance,
+                    ROUND(AVG(actual_fare)::numeric, 2) as avg_fare,
+                    ROUND(AVG(driver_rating)::numeric, 1) as avg_rating,
                     COUNT(*) as trip_count
                 FROM analytics.trip
                 WHERE status = 'Completed'
@@ -151,6 +165,7 @@ class TripRetriever:
 
         except Exception as e:
             logger.error(f"❌ Failed to retrieve trips: {e}", exc_info=True)
+            await db.rollback()
             return []
     
     @staticmethod
@@ -204,4 +219,46 @@ class TripRetriever:
         
         except Exception as e:
             logger.error(f"❌ Failed to retrieve driver for ride {ride_id}: {e}", exc_info=True)
+            await db.rollback()
             return None
+        
+    @staticmethod
+    async def fuzzy_search_routes(db: AsyncSession, pickup_keyword: str, dropoff_keyword: str) -> List[Dict]:
+        """Fuzzy search for routes based on pickup and dropoff keywords"""
+        try:
+            query = text("""
+                SELECT
+                    pickup_location, dropoff_location, ride_type,
+                    COUNT(*) as trip_count
+                FROM analytics.trip
+                WHERE status = 'Completed'
+                    AND pickup_location ILIKE :pickup
+                    AND dropoff_location ILIKE :dropoff
+                GROUP BY pickup_location, dropoff_location, ride_type
+                ORDER BY trip_count DESC
+            """)
+
+            result = await db.execute(query, {
+                "pickup": f"%{pickup_keyword}%",
+                "dropoff": f"%{dropoff_keyword}%"
+            })
+
+            rows = result.fetchall()
+
+            return [
+                {
+                    "pickup": row[0],
+                    "dropoff": row[1],
+                    "vehicle_type": row[2],
+                    "trip_count": row[3]
+                }
+                for row in rows
+            ]
+        
+        except Exception as e:
+            logger.error(f"❌ Fuzzy search failed for {pickup_keyword} → {dropoff_keyword}: {e}", exc_info=True)
+            await db.rollback()
+            return []
+        
+# Singleton
+trip_retriever = TripRetriever()

@@ -22,6 +22,7 @@ print(f"📁 Python path includes: {sys.path[0]}")
 
 from sqlalchemy import text
 from app.core.postgres_db import get_postgres_db
+from app.core.database import get_pg_db
 from app.services.ml_predictor import MLPredictor
 from app.models.trip import Trip
 import logging

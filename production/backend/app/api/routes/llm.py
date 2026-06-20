@@ -71,7 +71,7 @@ class ChatRequest(BaseModel):
     user_id: str
     session_id: Optional[str] = None
     messages: List[Message]
-    temperature: float = Field(default=0.7, ge=0, le=2)
+    temperature: float = Field(default=0.5, ge=0, le=2)
     context: Optional[Dict] = None
 
 class RouteRecommendRequest(BaseModel):
@@ -337,14 +337,19 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
             final_response += "Here are some popular routes we have data for:\n"
             
             # Get sample routes for suggestions
-            all_routes = await TripRetriever.get_all_routes(db)
-            if all_routes:
-                unique_routes = {}
-                for route in all_routes[:5]:
-                    key = f"{route['pickup']} → {route['dropoff']}"
-                    if key not in unique_routes:
-                        unique_routes[key] = route['vehicle']
-                        final_response += f"• {key} ({route['vehicle']})\n"
+            try:
+                all_routes = await TripRetriever.get_all_routes(db)
+                if all_routes:
+                    unique_routes = {}
+                    for route in all_routes[:5]:
+                        key = f"{route['pickup']} → {route['dropoff']}"
+
+                        if key not in unique_routes:
+                            unique_routes[key] = route['vehicle_type']
+                            final_response += f"• {key} ({route['vehicle_type']})\n"
+
+            except Exception as e:
+                logger.error(f"Error getting routes for suggestions: {e}")
             
             final_response += "\nCould you try one of these routes or check your spelling?"
 
@@ -463,8 +468,7 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
 @router.post("/recommend-route")
 async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredictor = Depends(get_ml_predictor)):
     """Get route recommendation from natural language query."""
-    llm = LLMService()
-    recommendation = await llm.recommend_route(request.query, request.context)
+    recommendation = await llm_service.recommend_route(request.query, request.context)
 
     if "pickup" in recommendation and "drop" in recommendation:
         try:
@@ -486,15 +490,13 @@ async def recommend_route(request: RouteRecommendRequest, ml_predictor: MLPredic
 @router.post("/ask-route")
 async def ask_route(request: RouteQuestionRequest):
     """Ask a question about a route or map."""
-    llm = LLMService()
-    answer = await llm.answer_route_question(request.question, request.route_context)
+    answer = await llm_service.answer_route_question(request.question, request.route_context)
     return {"answer": answer}
 
 @router.post("/ask-price")
 async def ask_price(request: PriceQuestionRequest):
     """Ask a question about pricing or surge."""
-    llm = LLMService()
-    answer = await llm.answer_price_question(request.question, request.price_context)
+    answer = await llm_service.answer_price_question(request.question, request.price_context)
     return {"answer": answer}
 
 @router.get("/db-test")

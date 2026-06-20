@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.core.postgres_db import get_postgres_db
-from app.services.trip_retriever import TripRetriever
+from app.core.database import get_pg_db
+from app.services.trip_retriever import TripRetriever, trip_retriever
 
 router = APIRouter(prefix="/debug", tags=["Debug"])
 logger = logging.getLogger(__name__)
@@ -91,11 +92,10 @@ async def test_route(pickup: str, dropoff: str, db: AsyncSession = Depends(get_p
     
 # Implement TripRetriever for test end point on fuzzy search
 @router.get("/fuzzy-search/{pickup}/{dropoff}")
-async def fuzzy_search(pickup: str, dropoff: str, db: AsyncSession):
+async def fuzzy_search(pickup: str, dropoff: str, db: AsyncSession = Depends(get_postgres_db)):
     """Test fuzzy search for routes"""
     try:
-        retriever = TripRetriever(db)
-        results = await retriever.fuzzy_search_routes(pickup, dropoff)
+        results = await trip_retriever.fuzzy_search_routes(db, pickup, dropoff)
     
         return {
             "pickup_search": pickup,

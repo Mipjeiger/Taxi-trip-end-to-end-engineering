@@ -6,8 +6,7 @@ from typing import Optional, Dict, Any, List
 from qdrant_client.http import models
 from qdrant_client import QdrantClient
 from app.core.config import settings
-from qdrant_client.models import Distance, VectorParams, PointStruct
-from sqlalchemy import text
+from qdrant_client.models import Distance, VectorParams
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -45,19 +44,8 @@ class QdrantVectorDB:
     def _initialize_client(self):
         """Initialize Qdrant client connection"""
         try:
-            if settings.QDRANT_HOST:
-                logger.info(f"🔗 Connecting to Qdrant at: {settings.QDRANT_HOST}:{settings.QDRANT_PORT}")
-                self.client = QdrantClient(
-                    host=settings.QDRANT_HOST,
-                    port=settings.QDRANT_PORT,
-                    timeout=60
-                )
-            
-            # Fallback to Cloud qdrant if host not configured
-            elif settings.QDRANT_URL and settings.QDRANT_URL.strip():
-                hostname = settings.QDRANT_URL.replace('https://', '').split('/')[0]
-                logger.info(f"🔗 Connecting to Qdrant at: {hostname}")
-                
+            # Use primary Qdrant cloud
+            if settings.QDRANT_URL and settings.QDRANT_URL.strip():                
                 self.client = QdrantClient(
                     url=settings.QDRANT_URL,
                     api_key=settings.QDRANT_API_KEY,
@@ -145,7 +133,7 @@ class QdrantVectorDB:
     ):
         """Search for similar vectors in the collection"""
         try:
-            if not self.client or self.connected:
+            if not self.client or not self.connected:
                 logger.error("❌ Qdrant client is not initialized. Cannot perform search.")
                 return []
 

@@ -1,5 +1,6 @@
 
 
+
 -- Active: 1781591252887@@localhost@5433@taxi_db
 -- DuckDB Analytics Schema (Local Tables)
 -- PostgreSQL schema for analytics
@@ -322,4 +323,22 @@ SELECT * FROM analytics.drivers;
 
 SELECT * FROM analytics.llm_interactions;
 
-SELECT * FROM analytics.taxi_trip_data_events
+SELECT * FROM analytics.taxi_trip_data_events;
+
+SELECT pickup_location, dropoff_location, booking_status, ride_id, rider_id, ride_type
+FROM analytics.trip
+WHERE pickup_location = 'Rawasari' AND dropoff_location = 'Kembangan Utara';
+
+-- Find database
+SELECT
+	pickup_location, dropoff_location, ride_type, hour, day_of_week, distance_km,
+COUNT(*) as trip_count,
+	ROUND(AVG(actual_fare)::numeric, 0) as avg_fare,
+	ROUND(AVG(duration_minutes)::numeric, 1) as avg_duration
+FROM analytics.trip
+WHERE ride_id IS NOT NULL
+	AND pickup_location = 'Fatmawati'
+	AND dropoff_location = 'Rorotan'
+	AND ride_type = 'Alphard'
+GROUP BY pickup_location, dropoff_location, ride_type, hour, day_of_week, distance_km
+ORDER BY trip_count DESC;

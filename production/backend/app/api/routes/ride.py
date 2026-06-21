@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 
 from app.core.database import get_db, get_pg_db
+from app.core.postgres_db import get_postgres_db
 #from app.models.ride import Ride
 from app.models.trip import Trip
 from app.models.prediction import (
@@ -36,7 +37,7 @@ router = APIRouter()
 @router.post("/request", response_model=RideResponse)
 async def create_ride_with_prediction(
     request: RideCreationRequest,
-    db: AsyncSession = Depends(get_pg_db),
+    db: AsyncSession = Depends(get_postgres_db),
     ml_predictor: MLPredictor = Depends(get_ml_predictor)
 ):
     """
@@ -187,7 +188,7 @@ async def create_ride_with_prediction(
 @router.post("/rides/book")
 async def book_ride(
     payload: RideBookRequest,
-    db: AsyncSession = Depends(get_pg_db)
+    db: AsyncSession = Depends(get_postgres_db)
 ):
     """
     Book a ride with ML predictions.
@@ -282,7 +283,7 @@ async def book_ride(
 @router.post("/rides/{ride_id}/match-driver")
 async def match_driver_to_ride(
     ride_id: str,
-    db: AsyncSession = Depends(get_pg_db)
+    db: AsyncSession = Depends(get_postgres_db)
 ):
     """
     Match a driver to a ride.
@@ -333,7 +334,7 @@ async def match_driver_to_ride(
 @router.get("/rides/{ride_id}/status")
 async def get_ride_status(
     ride_id: str,
-    db: AsyncSession = Depends(get_pg_db)
+    db: AsyncSession = Depends(get_postgres_db)
 ):
     """
     Get ride status with driver info.
@@ -348,7 +349,7 @@ async def get_ride_status(
 @router.post("/rides/{ride_id}/complete")
 async def complete_ride(
     ride_id: str,
-    db: AsyncSession = Depends(get_pg_db)
+    db: AsyncSession = Depends(get_postgres_db)
 ):
     """
     Complete a ride.
@@ -373,7 +374,7 @@ async def complete_ride(
 @router.post("/rides/{ride_id}/cancel")
 async def cancel_ride(
     ride_id: str,
-    db: AsyncSession = Depends(get_pg_db)
+    db: AsyncSession = Depends(get_postgres_db)
 ):
     """
     Cancel a ride.
@@ -405,7 +406,7 @@ async def cancel_ride(
 async def ride_history(
     user_id: str,
     limit: int = 100,
-    db: AsyncSession = Depends(get_pg_db)
+    db: AsyncSession = Depends(get_postgres_db)
 ):
     """
     Get ride history for a user.
@@ -459,7 +460,7 @@ async def ride_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/rides/stats")
-async def get_ride_stats(db: AsyncSession = Depends(get_pg_db)):
+async def get_ride_stats(db: AsyncSession = Depends(get_postgres_db)):
     """
     Get ride statistics.
     """
@@ -492,7 +493,7 @@ async def get_ride_stats(db: AsyncSession = Depends(get_pg_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{ride_id}", response_model=RideResponse)
-async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_pg_db)):
+async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_postgres_db)):
     """Get specific ride details including VTAT vehicle arrival"""
     try:
         query = select(Trip).where(Trip.ride_id == ride_id)
@@ -515,7 +516,7 @@ async def get_ride_details(ride_id: str, db: AsyncSession = Depends(get_pg_db)):
 async def update_ride_status(
     ride_id: str,
     new_status: BookingStatus,
-    db: AsyncSession = Depends(get_pg_db)
+    db: AsyncSession = Depends(get_postgres_db)
 ):
     """
     Update ride status (Completed, Cancelled by Driver, etc.)
@@ -559,7 +560,7 @@ async def update_ride_status(
 
 
 @router.get("/stats/by_status")
-async def get_stats_by_status(db: AsyncSession = Depends(get_pg_db)):
+async def get_stats_by_status(db: AsyncSession = Depends(get_postgres_db)):
     """Get trip statistics grouped by booking status"""
     try:
         query = select(Trip)

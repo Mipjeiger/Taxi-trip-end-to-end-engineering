@@ -1,4 +1,3 @@
-
 services:
   # Redis for caching and real-time features
   redis:
@@ -335,6 +334,10 @@ services:
       - ./backend/airflow/config:/opt/airflow/config
       - ./backend/database:/opt/airflow/database
       - airflow_logs_volume:/opt/airflow/logs
+      - ./production/backend:/opt/airflow/backend
+      - ./production/backend/app:/opt/airflow/app
+      - ./production/backend/airflow/dags:/opt/airflow/dags
+      - ./production/backend/models:/opt/airflow/models
     ports:
       - "8080:8080"
     command: bash -c "airflow db migrate && airflow webserver"
@@ -398,6 +401,10 @@ services:
       - ./backend/airflow/config:/opt/airflow/config
       - ./backend/database:/opt/airflow/database
       - airflow_logs_volume:/opt/airflow/logs
+      - ./production/backend:/opt/airflow/backend
+      - ./production/backend/app:/opt/airflow/app
+      - ./production/backend/airflow/dags:/opt/airflow/dags
+      - ./production/backend/models:/opt/airflow/models
     command: airflow scheduler # removed airflow db migrate to prevent DB race condition with webserver
     depends_on:
       airflow-db:

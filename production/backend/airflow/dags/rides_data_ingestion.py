@@ -1,11 +1,77 @@
-import logging
 import os
+import sys
+from pathlib import Path
+
+# Get the absolute path to the backend directory
+# In Docker: /opt/airflow/dags/rides_data_ingestion.py -> /opt/airflow/backend/
+# Local: production/backend/airflow/dags/rides_data_ingestion.py -> production/backend/
+possible_paths = [
+    Path(__file__).resolve().parent.parent.parent, # /opt/airflow/backend
+    Path(__file__).resolve().parent.parent.parent.parent, # /opt/airflow
+    Path('/app'), # Docker app directory
+    Path('/opt/airflow/app') # Alternative app location
+]
+
+BACKEND_DIR = None
+for path in possible_paths:
+    if path.exists() and (path / 'app').exists():
+        BACKEND_DIR = path
+        break
+
+if BACKEND_DIR is None:
+    # Fallback use the parent of the parent of the dags directory
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Add to python path
+sys.path.insert(0, str(BACKEND_DIR))
+
+# Debug: Print path for logging
+print(f"📁 Backend directory: {BACKEND_DIR}")
+print(f"📁 Files in backend: {list(BACKEND_DIR.iterdir()) if BACKEND_DIR.exists() else 'Not found'}")
+
+# Check if we can import app modules
+try:
+    from app.services.model_loader import model_loader
+    MODEL_LOADER_AVAILABLE = True
+    print(f"✅ Model loader imported from {BACKEND_DIR}")
+except ImportError as e:
+    print(f"⚠️ Model loader import failed: {e}")
+    
+    # Try alternative path (Docker environment)
+    alt_path = Path('/app')
+    if alt_path.exists() and (alt_path / 'app').exists():
+        sys.path.insert(0, str(alt_path))
+        try:
+            from app.services.model_loader import model_loader
+            MODEL_LOADER_AVAILABLE = True
+            print(f"✅ Model loader imported from {alt_path}")
+        except ImportError as e2:
+            print(f"⚠️ Alternative import also failed: {e2}")
+            MODEL_LOADER_AVAILABLE = False
+    else:
+        MODEL_LOADER_AVAILABLE = False
+
+# Create fallback if model_loader not available
+if not MODEL_LOADER_AVAILABLE:
+    class FallbackModelLoader:
+        def load_ctat_models(self):
+            return {'best_model': None, 'best_models_ultra': None, 'route_hour_dict': None, 'results_df': None}
+        def load_vtat_models(self):
+            return {'best_model': None, 'best_models_ultra': None, 'route_hour_dict': None, 'results_df': None}
+        def load_encoders_scalers(self):
+            return {'scaler_ultra': None, 'le_pickup': None, 'le_drop': None}
+        def load_features(self):
+            return {'features_ultra': None}
+    
+    model_loader = FallbackModelLoader()
+    print("⚠️ Using fallback model_loader - ML predictions will use defaults")
+
+
+import logging
 import redis
 import json
-from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from app.services.model_loader import model_loader
 
 # Airflow imports
 from airflow import DAG

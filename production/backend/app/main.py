@@ -21,6 +21,7 @@ from app.api.dependencies import (
     set_churn_recommender, set_matching_recommender
 )
 from app.api.routes import health
+from app.api.routes import debug
 
 # Redis & MLflow imports
 from app.core.redis_client import get_redis, close_redis
@@ -240,6 +241,7 @@ app.add_middleware(MetricsMiddleware)
 
 # Include routers
 app.include_router(health.router)
+app.include_router(debug.router)
 app.include_router(prediction.router, prefix="/api/predictions", tags=["Predictions"])
 app.include_router(ride.router, prefix="/api/rides", tags=["Rides"])
 app.include_router(driver.router, prefix="/api/drivers", tags=["Drivers"])

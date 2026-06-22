@@ -72,6 +72,8 @@ class TripRetriever:
                 }
                 for row in rows
             ]
+
+            return routes
             
         except Exception as e:
             logger.error(f"❌ Failed to get routes: {e}")

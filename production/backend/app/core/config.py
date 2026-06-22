@@ -57,8 +57,6 @@ class Settings(BaseSettings):
     # Qdrant Configuration
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
-    QDRANT_HOST: Optional[str] = None
-    QDRANT_PORT: Optional[int] = None
 
 
     # ---- File paths -----

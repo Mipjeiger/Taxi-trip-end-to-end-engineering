@@ -14,7 +14,7 @@ class QueryRequest(BaseModel):
     sql: str
 
 @router.get("/health")
-async def anyltics_health(db: AsyncSession = Depends(get_pg_db)):
+async def anyltics_health(db: AsyncSession = Depends(get_postgres_db)):
     """Check PostgreSQL connection health"""
     try:
         await db.execute(text("SELECT 1"))
@@ -30,7 +30,7 @@ async def anyltics_health(db: AsyncSession = Depends(get_pg_db)):
         }
 
 @router.post("/query")
-async def run_query(req: QueryRequest, db: AsyncSession = Depends(get_pg_db)):
+async def run_query(req: QueryRequest, db: AsyncSession = Depends(get_postgres_db)):
     """Run a custom SQL query against Postgresql and return results"""
     try:
         query = req.sql
@@ -45,7 +45,7 @@ async def run_query(req: QueryRequest, db: AsyncSession = Depends(get_pg_db)):
         raise HTTPException(status_code=400, detail=f"Error executing query: {e}")
     
 @router.get("/tables")
-async def list_tables(db: AsyncSession = Depends(get_pg_db)):
+async def list_tables(db: AsyncSession = Depends(get_postgres_db)):
     """List all tables in PostgreSQL"""
     try:
         query = text("""
@@ -62,7 +62,7 @@ async def list_tables(db: AsyncSession = Depends(get_pg_db)):
         raise HTTPException(status_code=400, detail=f"Error listing tables: {e}")
 
 @router.get("/summary")
-async def summary(db: AsyncSession = Depends(get_pg_db)):
+async def summary(db: AsyncSession = Depends(get_postgres_db)):
     """Get a summary of the PostgreSQL database"""
     try:
         # Get all tables in analytics schema
@@ -87,7 +87,7 @@ async def summary(db: AsyncSession = Depends(get_pg_db)):
         raise HTTPException(status_code=400, detail=f"Error generating summary: {e}")
     
 @router.get("/rides/stats")
-async def ride_statistics(db: AsyncSession = Depends(get_pg_db)):
+async def ride_statistics(db: AsyncSession = Depends(get_postgres_db)):
     """Get ride statistics such as average price, average distance, and total rides"""
     try:
         query = text("""
@@ -113,7 +113,7 @@ async def ride_statistics(db: AsyncSession = Depends(get_pg_db)):
         raise HTTPException(status_code=400, detail=f"Error fetching ride statistics: {e}")
     
 @router.get("/driver/top")
-async def top_drivers(limit: int = 10 ,db: AsyncSession = Depends(get_pg_db)):
+async def top_drivers(limit: int = 10 ,db: AsyncSession = Depends(get_postgres_db)):
     """Get top rated drivers"""
     try:
         query = text("""

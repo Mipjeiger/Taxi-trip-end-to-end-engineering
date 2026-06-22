@@ -243,17 +243,11 @@ class MLPredictor:
                 query = await db.execute(
                     text("""
                         SELECT
-                            pickup_location, drop_location, ride_type, hour, day_of_week, distance_km
-                        COUNT(*) as trip_count,
-                        ROUND(AVG(actual_fare)::numeric, 0) as avg_fare,
-                        ROUND(AVG(duration_minutes)::numeric, 1) as avg_duration
-                        FROM analytics.trip
-                        WHERE ride_id IS NOT NULL
-                            AND pickup_location = :pickup
-                            AND drop_location = :drop
-                            AND ride_type = :ride_type
-                        GROUP BY pickup_location, drop_location, ride_type, hour, day_of_week, distance_km
-                        ORDER BY trip_count DESC                         
+                            pickup_encoded, drop_encoded, vehicle_encoded, hour, day_of_week,
+                            route_cluster, distance_km, is_peak_hour, is_weekend, is_night,
+                            hour_sin, hour_cos, day_sin, day_cos
+                        FROM analytics.ml_predictor
+                        WHERE pickup_encoded IS NOT NULL AND drop_encoded IS NOT NULL                 
                         """)
                         )
                 result = await db.execute(query)
@@ -261,15 +255,20 @@ class MLPredictor:
 
                 routes = [
                     {
-                        "pickup": row[0],
-                        "dropoff": row[1],
-                        "vehicle_type": row[2],
+                        "pickup_encoded": row[0],
+                        "drop_encoded": row[1],
+                        "vehicle_encoded": row[2],
                         "hour": row[3],
                         "day_of_week": row[4],
-                        "distance_km": float(row[5]) if row[5] else None,
-                        "trip_count": row[6],
-                        "avg_fare": float(row[7]) if row[7] else None,
-                        "avg_duration": float(row[8]) if row[8] else None
+                        "route_cluster": row[5],
+                        "distance_km": row[6],
+                        "is_peak_hour": row[7],
+                        "is_weekend": row[8],
+                        "is_night": row[9],
+                        "hour_sin": row[10],
+                        "hour_cos": row[11],
+                        "day_sin": row[12],
+                        "day_cos": row[13]
                     }
                     for row in rows
                 ]

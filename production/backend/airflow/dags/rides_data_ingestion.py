@@ -5,11 +5,13 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from app.services.model_loader import model_loader
 
 # Airflow imports
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 import pandas as pd
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,7 @@ dag = DAG(
     description="Ingest ride data from Parquet to PostgreSQL with Redis caching",
     schedule=None,  # Manual trigger
     catchup=False,
-    tags=["taxi-trip", "postgres", "redis", "kafka"],
+    tags=["taxi-trip", "postgres", "redis", "kafka", "Machine Learning"],
 )
 
 # ================================================================
@@ -67,7 +69,7 @@ PARQUET_PATH = os.getenv("PARQUET_PATH", "/opt/airflow/database/taxi_trip_engine
 TEMP_DIR = "/tmp/airflow_taxi_pipeline"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-ROW_LIMIT = int(os.getenv("INGESTION_ROW_LIMIT", 15000))
+ROW_LIMIT = int(os.getenv("INGESTION_ROW_LIMIT", 10000))
 
 # Parquet Source -> PostgreSQL table mapping
 COLUMN_RENAME_MAP = {
@@ -276,14 +278,285 @@ def transform_data(**context):
         raise e
 
 # ================================================================
-# Task 3: Load Into PostgreSQL
+# Task 3: Load models and implement Machine learinng models in vehicle_arrival_at, vtat_minutes, and ctat_minutes columns
+# ================================================================
+def implement_ml_models(**context):
+    """Implement ML models to predict:
+    - vtat_minutes (Vehicle Time to Arrival)
+    - ctat_minutes (Customer Time to Arrival)
+    - vehicle_arrival_at (timestamp when vehicle arrives)
+    """
+    try:
+        # Load transformed data
+        transformed_path = context["task_instance"].xcom_pull(
+            task_ids="transform_data", key="transformed_path",
+        )
+
+        if not transformed_path:
+            raise ValueError("No transformed parquet path found in XCom")
+        
+        df = pd.read_parquet(transformed_path)
+        logger.info(f"✅ Loaded transformed dataframe with {len(df)} rows for ML predictions")
+
+        # LOad ML models
+        ctat_models = model_loader.load_ctat_models()
+        vtat_models = model_loader.load_vtat_models()
+
+        # Load encoders and scalers
+        encoders_scalers = model_loader.load_encoders_scalers()
+        features_data = model_loader.load_features()
+
+        # Get the best models
+        ctat_model = ctat_models.get("best_model")
+        vtat_model = vtat_models.get("best_model")
+        scaler = encoders_scalers.get("scaler_ultra")
+        le_pickup = encoders_scalers.get("le_pickup")
+        le_drop = encoders_scalers.get("le_drop")
+        feature_list = features_data.get("features")
+
+        if ctat_model is None or vtat_model is None:
+            logger.warning("⚠️ ML models not loaded, skipping ML predictions")
+            return await_ml_models_default(df)
+        
+        # Vehicle type encoding mapping
+        VEHICLE_TYPE_ENCODING = {
+            'Alphard': 0, 
+            'HRV': 1, 
+            'Go Sedan': 2,
+            'Innova': 3, 
+            'Premier Sedan': 4, 
+            'Brio': 5, 
+            'Terios': 6
+        }
+
+        # Prepare features for prediction
+        def prepare_features(row):
+            """Extract features for ML prediction"""
+            try:
+                # Encode pickp and drop locations
+                pickup_encoded = 0
+                drop_encoded = 0
+
+                if le_pickup is not None and row.get("pickup_location"):
+                    try:
+                        pickup_encoded = le_pickup.transform([row['pickup_location']])[0]
+                    except:
+                        pickup_encoded = abs(hash(row.get('pickup_location', ''))) % 1000
+
+                if le_drop is not None and row.get("dropoff_location"):
+                    try:
+                        drop_encoded = le_drop.transform([row['dropoff_location']])[0]
+                    except:
+                        drop_encoded = abs(hash(row.get('dropoff_location', ''))) % 1000
+
+                # Get vehicle type encoding
+                vehicle_encoded = VEHICLE_TYPE_ENCODING.get(row.get("ride_type", "Brio"), 5)
+
+                # Get time features
+                created_at = row.get("created_at")
+                if created_at:
+                    if isinstance(created_at, str):
+                        created_at = pd.to_datetime(created_at)
+                    hour = created_at.hour
+                    day_of_week = created_at.weekday()
+                
+                else:
+                    hour = 12
+                    day_of_week = 3
+
+                # Calculate time-based features
+                is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
+                is_weekend = 1 if day_of_week >= 5 else 0
+                is_night = 1 if hour >= 22 or hour < 6 else 0
+
+                # Cylical encoding
+                hour_sin = np.sin(2 * np.pi * hour / 24)
+                hour_cos = np.cos(2 * np.pi * hour / 24)
+                day_sin = np.sin(2 * np.pi * day_of_week / 7)
+                day_cos = np.cos(2 * np.pi * day_of_week / 7)
+
+                # Route cluster
+                route_key = f"{pickup_encoded}_{drop_encoded}"
+                route_cluster = abs(hash(route_key)) % 100
+
+                # Distance
+                distance_km = float(row.get("distance_km", 10.0))
+
+                # Create feature dict
+                features = {
+                    "Pickup Encoded": pickup_encoded,
+                    "Drop Encoded": drop_encoded,
+                    "Vehicle Type Encoded": vehicle_encoded,
+                    "hour": hour,
+                    "day_of_week": day_of_week,
+                    "route_cluster": route_cluster,
+                    "Ride Distance": distance_km,
+                    "is_peak_hour": is_peak_hour,
+                    "is_weekend": is_weekend,
+                    "is_night": is_night,
+                    "hour_sin": hour_sin,
+                    "hour_cos": hour_cos,
+                    "day_sin": day_sin,
+                    "day_cos": day_cos,
+                }
+
+                # Ensure all features are exists
+                if feature_list:
+                    for col in feature_list:
+                        if col not in features:
+                            features[col] = 0
+                    return pd.DataFrame([features])[feature_list]
+                else:
+                    return pd.DataFrame([features])
+                
+            except Exception as e:
+                logger.error(f"❌ Error preparing features for row {row.get('ride_id')}: {e}")
+                return None
+            
+        # Apply ML predictions
+        logger.info("👷 Applying ML predictions for vtat and ctat...")
+
+        vtat_predictions = []
+        ctat_predictions = []
+
+        for idx, row in df.iterrows():
+            try:
+                features_df = prepare_features(row)
+
+                if features_df is not None and scaler is not None:
+                    # Scale features
+                    features_scaled = scaler.transform(features_df)
+
+                    # Predict CTAT and VTAT
+                    if ctat_model is not None:
+                        ctat_pred = float(ctat_model.predict(features_scaled)[0])
+                        ctat_pred = max(ctat_pred, 5.0) # Minimum 5 minutes
+                    else:
+                        ctat_pred = float(row.get("ctat_minutes", 2.0))
+
+                    if vtat_model is not None:
+                        vtat_pred = float(vtat_model.predict(features_scaled)[0])
+                        vtat_pred = max(vtat_pred, 2.0) # Minimum 2 minutes
+                    else:
+                        vtat_pred = ctat_pred * 0.3
+
+                else:
+                    # Fallback values
+                    ctat_pred = float(row.get("duration_minutes", 20.0))
+                    vtat_pred = ctat_pred * 0.3
+
+                
+                # Append predictions
+                ctat_predictions.append(ctat_pred)
+                vtat_predictions.append(vtat_pred)
+
+            except Exception as e:
+                logger.error(f"❌ Error predicting ML for row {idx}: {e}")
+                # Use fallback values
+                ctat_pred = float(row.get("duration_minutes", 20.0))
+                vtat_pred = ctat_pred * 0.3
+                ctat_predictions.append(ctat_pred)
+                vtat_predictions.append(vtat_pred)
+
+        # Add predictions to dataframe
+        df['vtat_minutes'] = vtat_predictions
+        df['ctat_minutes'] = ctat_predictions
+
+        # Calculate vehicle_arrival_at from vtat_minutes
+        def calculate_vehicle_arrival(row):
+            created_at = row.get("created_at")
+            vtat_min = row.get("vtat_minutes", 10.0)
+
+            if created_at:
+                if isinstance(created_at, str):
+                    created_at = pd.to_datetime(created_at)
+                return created_at + pd.Timedelta(minutes=vtat_min)
+            
+            return None
+        
+        # Apply vehicle_arrival_at calculation
+        df['vehicle_arrival_at'] = df.apply(calculate_vehicle_arrival, axis=1)
+
+        # Log statistics
+        logger.info(f"📊 ML Prediction Statistics:")
+        logger.info(f"   - CTAT (duration) avg: {df['ctat_minutes'].mean():.1f} min")
+        logger.info(f"   - VTAT avg: {df['vtat_minutes'].mean():.1f} min")
+        logger.info(f"   - CTAT min: {df['ctat_minutes'].min():.1f} min")
+        logger.info(f"   - VTAT min: {df['vtat_minutes'].min():.1f} min")
+        logger.info(f"   - CTAT max: {df['ctat_minutes'].max():.1f} min")
+        logger.info(f"   - VTAT max: {df['vtat_minutes'].max():.1f} min")
+
+        # Save the updated dataframe
+        ml_transformed_path = os.path.join(
+            TEMP_DIR,
+            f"ml_transformed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet",
+        )
+        df.to_parquet(ml_transformed_path, index=False)
+
+        # PUsh the updated Path to Xcom
+        context["task_instance"].xcom_push(key="ml_transformed_path", value=ml_transformed_path)
+        logger.info(f"✅ ML predictions applied and saved to {ml_transformed_path}")
+
+        return {
+            "rows_processed": len(df),
+            "ctat_avg": df['ctat_minutes'].mean(),
+            "vtat_avg": df['vtat_minutes'].mean(),
+            "file_path": ml_transformed_path,
+        }
+    
+    except Exception as e:
+        logger.exception("❌ Failed implementing ML models")
+        raise e
+
+def await_ml_models_default(df):
+    """Fallback function when ML models are not available"""
+    logger.warning("⚠️ ML models not available, using default values for vtat and ctat")
+
+    # Use duration_minutes as ctat, and 30% as vtat
+    df['ctat_minutes'] = df['duration_minutes'].fillna(20.0)
+    df['vtat_minutes'] = df['ctat_minutes'] * 0.3
+
+    # Calculate vehicle_arrival_at
+    def calculate_vehicle_arrival(row):
+        created_at = row.get("created_at")
+        if created_at:
+            if isinstance(created_at, str):
+                created_at = pd.to_datetime(created_at)
+            return created_at + pd.Timedelta(minutes=row.get("vtat_minutes", 10))
+        
+        return None
+    
+    df['vehicle_arrival_at'] = df.apply(calculate_vehicle_arrival, axis=1)
+
+    # Calculate completed_at
+    def calculate_completed_at(row):
+        created_at = row.get("created_at")
+        if created_at:
+            if isinstance(created_at, str):
+                created_at = pd.to_datetime(created_at)
+            return created_at + pd.Timedelta(minutes=row.get("ctat_minutes", 20))
+        
+        return None
+
+    df['completed_at'] = df.apply(calculate_completed_at, axis=1)
+
+    return df
+
+# ================================================================
+# Task 4: Load Into PostgreSQL
 # ================================================================
 def load_to_postgres(**context):
     """Load transformed data into PostgreSQL"""
     try:
+        # First try to get ML transformed path, fallback to regular transformed path
         transformed_path = context["task_instance"].xcom_pull(
-            task_ids="transform_data", key="transformed_path",
+            task_ids="implement_ml_models", key="ml_transformed_path",
         )
+
+        if not transformed_path:
+            transformed_path = context["task_instance"].xcom_pull(
+                task_ids="transform_data", key="transformed_path",
+            )
 
         if not transformed_path:
             raise ValueError("No transformed parquet path found")
@@ -395,7 +668,7 @@ def load_to_postgres(**context):
         raise
 
 # ================================================================
-# Task 4: Cache Route Features to Redis
+# Task 5: Cache Route Features to Redis
 # ================================================================
 def cache_route_features(**context):
     """Cache route features to Redis for fast API responses"""
@@ -451,7 +724,7 @@ def cache_route_features(**context):
         raise
 
 # ================================================================
-# Task 5: Publish Kafka Event
+# Task 6: Publish Kafka Event
 # ================================================================
 def publish_kafka_event(**context):
     """Publish ingestion completion event to Kafka"""
@@ -502,7 +775,7 @@ def publish_kafka_event(**context):
         raise
 
 # ================================================================
-# Task 6: Data Quality Checks
+# Task 7: Data Quality Checks
 # ================================================================
 def data_quality_checks(**context):
     """Run data quality validation against PostgreSQL"""
@@ -616,6 +889,12 @@ task_transform = PythonOperator(
     dag=dag,
 )
 
+task_ml_models = PythonOperator(
+    task_id="implement_ml_models",
+    python_callable=implement_ml_models,
+    dag=dag,
+)
+
 task_load_postgres = PythonOperator(
     task_id="load_to_postgres",
     python_callable=load_to_postgres,
@@ -644,4 +923,4 @@ task_quality_check = PythonOperator(
 # Task Dependencies
 # ================================================================
 
-task_extract >> task_transform >> task_load_postgres >> task_cache_redis >> [task_kafka_event, task_quality_check]
+task_extract >> task_transform >> task_ml_models >> task_load_postgres >> task_cache_redis >> [task_kafka_event, task_quality_check]

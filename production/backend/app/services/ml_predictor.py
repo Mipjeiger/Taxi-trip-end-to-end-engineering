@@ -6,8 +6,10 @@ from typing import Dict, Optional, Union
 from pathlib import Path
 from datetime import datetime, timedelta
 from app.core.redis_client import redis_get, redis_set
-from app.core.database import get_supabase_connection
+from app.core.postgres_db import get_postgres_db
+from sqlalchemy import text
 from app.services.model_loader import model_loader
+from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
 logger = logging.getLogger(__name__)
@@ -231,76 +233,58 @@ class MLPredictor:
             raise
 
     async def _extract_features(
-            self, 
-            pickup: str, 
-            drop: str, 
-            vehicle_type: str,
-            hour: int, 
-            day_of_week: int, 
-            distance_km: float
+            self,
+            db: AsyncSession,
     ) -> pd.DataFrame:
-        """Extract features matching training pipeline exactly."""
-
-        # Encode locations with fallback for unseen values
+        """Extract features matching training pipeline by ingest data from database on postgres"""
         try:
-            pickup_encoded = self.encoders['pickup'].transform([pickup])[0]
+            # Connect to PostgreSQL database to fetch data for feature extraction
+            async for db in get_postgres_db():
+                query = await db.execute(
+                    text("""
+                        SELECT
+                            pickup_location, drop_location, ride_type, hour, day_of_week, distance_km
+                        COUNT(*) as trip_count,
+                        ROUND(AVG(actual_fare)::numeric, 0) as avg_fare,
+                        ROUND(AVG(duration_minutes)::numeric, 1) as avg_duration
+                        FROM analytics.trip
+                        WHERE ride_id IS NOT NULL
+                            AND pickup_location = :pickup
+                            AND drop_location = :drop
+                            AND ride_type = :ride_type
+                        GROUP BY pickup_location, drop_location, ride_type, hour, day_of_week, distance_km
+                        ORDER BY trip_count DESC                         
+                        """)
+                        )
+                result = await db.execute(query)
+                rows = result.fetchall()
+
+                routes = [
+                    {
+                        "pickup": row[0],
+                        "dropoff": row[1],
+                        "vehicle_type": row[2],
+                        "hour": row[3],
+                        "day_of_week": row[4],
+                        "distance_km": float(row[5]) if row[5] else None,
+                        "trip_count": row[6],
+                        "avg_fare": float(row[7]) if row[7] else None,
+                        "avg_duration": float(row[8]) if row[8] else None
+                    }
+                    for row in rows
+                ]
+                return routes
+            
+            # Insert to dataframe
+            features_df = pd.DataFrame(routes)
+            return features_df
+            
         except Exception as e:
-            logger.warning(f"⚠️ Pickup encoding failed for '{pickup}': {e}, using fallback encoding.")
-            pickup_encoded = -1
-
-        try:
-            drop_encoded = self.encoders['drop'].transform([drop])[0]
-        except Exception as e:
-            logger.warning(f"⚠️ Drop encoding failed for '{drop}': {e}, using fallback encoding.")
-            drop_encoded = -1
-
-        # Route clustering logic
-        route_key = f"{pickup_encoded}_{drop_encoded}"
-        route_cluster = hash(route_key) % 100
-
-        # Vehicle type encoding
-        VEHICLE_TYPE_ENCODING = {
-           'Alphard': 0, 'HRV': 1, 'Go Sedan': 2,
-            'Innova': 3, 'Premier Sedan': 4, 'Brio': 5, 'Terios': 6
-        }
-        vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 0)
-        logger.info(f"Encoded vehicle type '{vehicle_type}' as {vehicle_encoded}")
-
-        # Time-based features
-        is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
-        is_weekend = 1 if day_of_week >= 5 else 0
-        is_night = 1 if hour >= 22 or hour < 5 else 0
-
-        # Cyclical encoding for hour and day
-        hour_sin = np.sin(2 * np.pi * hour / 24)
-        hour_cos = np.cos(2 * np.pi * hour / 24)
-        day_sin = np.sin(2 * np.pi * day_of_week / 7)
-        day_cos = np.cos(2 * np.pi * day_of_week / 7)
-
-        # Create feature dictionary and DataFrame
-        feature_dict = {
-            'Pickup Encoded': pickup_encoded,
-            'Drop Encoded': drop_encoded,
-            'Vehicle Type Encoded': vehicle_encoded,
-            'hour': hour,
-            'day_of_week': day_of_week,
-            'route_cluster': route_cluster,
-            'Ride Distance': distance_km,
-            'is_peak_hour': is_peak_hour,
-            'is_weekend': is_weekend,
-            'is_night': is_night,
-            'hour_sin': hour_sin,
-            'hour_cos': hour_cos,
-            'day_sin': day_sin,
-            'day_cos': day_cos,
-        }
-
-        df = pd.DataFrame([feature_dict])
-        for col in self.features:
-            if col not in df.columns:
-                df[col] = 0
-    
-        return df[self.features]
+            logger.error(f"❌ Error extracting features from database: {e}")
+            await db.rollback()
+            return False
+                
+        
     
     async def _predict_ctat(self, features_df: pd.DataFrame, use_fallback: bool = False) -> float:
         """Predict CTAT using primary or fallback model."""

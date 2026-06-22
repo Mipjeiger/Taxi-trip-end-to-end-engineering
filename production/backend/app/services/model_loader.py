@@ -1,15 +1,37 @@
 import pickle
 import json
+import os
 from pathlib import Path
 #import tensorflow as tf
 from typing import Dict, Any
 
 class ModelLoader:
     """Utility class to load ML models from dir."""
-    def __init__(self, models_dir="/app/models"):
+    def __init__(self, models_dir: str = None):
+        
+        if models_dir is None:
+            possible_paths = [
+               '/app/models',                    # Docker backend
+                '/opt/airflow/backend/models',    # Docker Airflow
+                '/opt/airflow/models',            # Alternative Airflow
+                './models',                       # Local
+                '../models',                      # Local relative
+            ]
+            
+            for path in possible_paths:
+                if Path(path).exists():
+                    self.models_dir = Path(path)
+                    break
+
+            # Fallback to default
+            if models_dir is None:
+                models_dir = '/app/models'
+                
         self.models_dir = Path(models_dir)
         if not self.models_dir.exists():
-            print(f"⚠️  Warning: Models directory {self.models_dir} does not exist. Please check the path.")
+            print(f"⚠️ Warning: Models directory {self.models_dir} does not exist. Please check the path.")
+        else:
+            print(f"✅ Models directory set to: {self.models_dir}")
 
     # CTAT models
     def load_ctat_models(self) -> Dict[str, Any]:
@@ -88,16 +110,26 @@ class ModelLoader:
     def load_config(self) -> Dict:
         """Load config file."""
         config_path = self.models_dir / 'config_summary.json'
-        with open(config_path, 'r') as f:
-            return json.load(f)
-        
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        print(f"⚠️ Warning: Config file {config_path} does not exist.")
+        return {}
+
     # Helper method
     def _load_pickle(self, filename: str):
         """Load pickle file"""
         file_path = self.models_dir / filename
         if file_path.exists():
-            with open(file_path, 'rb') as f:
-                return pickle.load(f)
+            try:
+                with open(file_path, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e:
+                print(f"❌ Error occurred while loading {file_path}: {e}")
+                return None
+            
+        else:
+            print(f"⚠️ Warning: Pickle file {file_path} does not exist.")
         return None
     
     # Load all models
@@ -108,7 +140,7 @@ class ModelLoader:
             'vtat': self.load_vtat_models(),
             'price': self.load_price_model(),
             'time': self.load_time_model(),
-            'encoders_scalers': self.load_encoders_and_scalers(),
+            'encoders_scalers': self.load_encoders_scalers(),
             'features': self.load_features(),
             'models_dict': self.load_models_dict(),
             'config': self.load_config()

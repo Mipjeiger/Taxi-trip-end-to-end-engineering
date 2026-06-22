@@ -2,6 +2,8 @@ import os
 import sys
 from pathlib import Path
 
+from duckdb import df
+
 # Add backend directory to sys.path for imports
 BACKEND_DIR = Path('/opt/airflow/backend')
 
@@ -564,6 +566,7 @@ def implement_ml_models(**context):
             TEMP_DIR,
             f"ml_transformed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet",
         )
+        df.to_parquet(ml_transformed_path, index=False)
 
         # PUsh the updated Path to Xcom
         context["task_instance"].xcom_push(key="ml_transformed_path", value=ml_transformed_path)

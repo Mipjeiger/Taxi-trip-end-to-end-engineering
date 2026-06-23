@@ -1,18 +1,21 @@
 FROM apache/airflow:2.10.5-python3.11
 
 USER root
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-client \
+    libgomp1 \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 USER airflow
 
+# Copy requirements
 COPY --chown=airflow:airflow requirements.txt /opt/airflow/requirements.txt
 
-# FIXED: Changed constraint URL to match your 2.10.5 base image perfectly
-RUN pip install --no-cache-dir -r /opt/airflow/requirements.txt \
-    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.11.txt"
+# Install with constraints — use --no-cache-dir to avoid pip cache bloat
+RUN pip install --no-cache-dir \
+    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.11.txt" \
+    -r /opt/airflow/requirements.txt
 
 ENV PYTHONPATH=/opt/airflow
 WORKDIR /opt/airflow

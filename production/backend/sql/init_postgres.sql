@@ -42,6 +42,7 @@ ALTER TABLE analytics.trip ADD COLUMN hour INTEGER;
 CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id VARCHAR PRIMARY KEY,
     rider_id VARCHAR NOT NULL,
+	driver_id VARCHAR,
     driver_status VARCHAR,
     pickup_location VARCHAR,
     dropoff_location VARCHAR,
@@ -62,7 +63,12 @@ CREATE TABLE IF NOT EXISTS analytics.trip (
     hour INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     vehicle_arrival_at TIMESTAMP,
-    completed_at VARCHAR -- being set to the string 'No Trips' for all booking statuses except Completed
+    completed_at TIMESTAMP, -- being set to the string 'No Trips' for all booking statuses except Completed
+	pickup_encoded INTEGER,
+	drop_encoded INTEGER,
+	route_cluster INTEGER,
+	vtat_minutes DOUBLE PRECISION,
+	ctat_minutes DOUBLE PRECISION
 );
 
 -- Backfill from status column if already loaded
@@ -150,43 +156,55 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 -- ================================================================
 
 -- View 1: Rides summary by status
-CREATE VIEW analytics.rides_by_status AS
+CREATE OR REPLACE VIEW analytics.rides_by_status AS
 SELECT
-    status,
-    COUNT(*) as total_rides,
-    AVG(distance_km) as avg_distance,
-    AVG(actual_fare) as avg_fare,
-    MAX(created_at) as latest_ride
+    booking_status,
+    COUNT(*)            AS total_rides,
+    AVG(distance_km)    AS avg_distance,
+    AVG(actual_fare)    AS avg_fare,
+    AVG(vtat_minutes)   AS avg_vtat_min,
+    AVG(ctat_minutes)   AS avg_ctat_min,
+    MAX(created_at)     AS latest_ride
 FROM analytics.trip
-GROUP BY
-    status;
+GROUP BY booking_status;
+
+-- select db
+SELECT analytics.rides_by_status.booking_status, analytics.rides_by_status.total_rides, analytics.rides_by_status.avg_distance, analytics.rides_by_status.avg_fare, analytics.rides_by_status.latest_ride
+FROM analytics.rides_by_status;
 
 -- View 2: Driver performance metrics
 CREATE OR REPLACE VIEW analytics.driver_metrics AS
 SELECT
-    t.rider_id,
+    t.driver_id,
     COUNT(t.ride_id) as total_rides,
     AVG(d.rating) as avg_rating,
-    SUM(t.actual_fare) as total_earnings
+    SUM(t.actual_fare) as total_earnings,
+    AVG(t.vtat_minutes) as avg_vtat_min,
+    AVG(t.ctat_minutes) as avg_ctat_min
 FROM analytics.trip t
-    JOIN analytics.drivers d ON t.rider_id = d.driver_id
-WHERE
-    t.rider_id IS NOT NULL
-GROUP BY
-    t.rider_id;
+LEFT JOIN analytics.drivers d ON t.driver_id = d.driver_id
+WHERE t.driver_id IS NOT NULL
+GROUP BY t.driver_id;
+
+-- select db
+SELECT analytics.driver_metrics.driver_id, analytics.driver_metrics.total_rides, analytics.driver_metrics.avg_rating, analytics.driver_metrics.total_earnings, analytics.driver_metrics.avg_vtat_min, analytics.driver_metrics.avg_ctat_min
+FROM analytics.driver_metrics;
 
 -- View 3: Hourly ride trends
-CREATE VIEW analytics.hourly_ride_trends AS
-SELECT DATE_TRUNC('hour', created_at) as hour, COUNT(*) as ride_count, AVG(actual_fare) as avg_fare
+CREATE OR REPLACE VIEW analytics.hourly_ride_trends AS
+SELECT
+    DATE_TRUNC('hour', created_at) AS hour_bucket,
+    COUNT(*)                        AS ride_count,
+    AVG(actual_fare)                AS avg_fare,
+    AVG(vtat_minutes)               AS avg_vtat_min,
+    AVG(ctat_minutes)               AS avg_ctat_min
 FROM analytics.trip
-GROUP BY
-    DATE_TRUNC('hour', created_at)
-ORDER BY hour DESC;
+GROUP BY DATE_TRUNC('hour', created_at)
+ORDER BY hour_bucket DESC;
 
--- Data analyst to define which aren't Completed Trip
-SELECT booking_status, completed_at, vehicle_arrival_at
-FROM analytics.trip
-WHERE booking_status != 'Completed';
+-- select db
+SELECT analytics.hourly_ride_trends.hour_bucket, analytics.hourly_ride_trends.ride_count, analytics.hourly_ride_trends.avg_fare, analytics.hourly_ride_trends.avg_vtat_min, analytics.hourly_ride_trends.avg_ctat_min
+FROM analytics.hourly_ride_trends;
 
 -- Update changing name on postgres
 UPDATE analytics.trip
@@ -312,7 +330,33 @@ JOIN
 -- select data
 SELECT * FROM analytics.data_retrieves;
 
+-- delete data
+DELETE FROM analytics.data_retrieves
+WHERE ride_id NOT IN (
+	SELECT ride_id
+	FROM analytics.trip
+	ORDER BY created_at DESC
+	LIMIT 2000
+);
+
+-- debugging for analytics.trip database
+-- Fix 1: Fix schema
+-- Fix completed_at type: VARCHAR → TIMESTAMP
+ALTER TABLE analytics.trip
+	ALTER COLUMN completed_at TYPE TIMESTAMP
+	USING completed_at::TIMESTAMP;
+
+-- Add missing driver_id column
+ALTER TABLE analytics.trip
+	ADD COLUMN IF NOT EXISTS driver_id VARCHAR;
+
+-- Verify final schema
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'analytics' AND table_name = 'trip'
+ORDER BY ordinal_position;
 ------------------------------------------------------------
+TRUNCATE analytics.trip;
 -- Select data
 SELECT * FROM analytics.trip;
 
@@ -321,6 +365,38 @@ SELECT * FROM analytics.drivers;
 SELECT * FROM analytics.llm_interactions;
 
 SELECT * FROM analytics.taxi_trip_data_events;
+
+SELECT * FROM analytics.ml_predictor;
+
+-- Delete the oldest 3000 completed trips
+DELETE FROM analytics.trip
+WHERE ride_id IN (
+	SELECT ride_id
+	FROM analytics.trip
+	WHERE booking_status = 'Completed'
+	ORDER BY created_at ASC
+	LIMIT 3000
+);
+
+-- select db
+SELECT
+	column_name,
+	data_type,
+	is_nullable
+FROM
+	information_schema.columns
+WHERE
+	table_schema = 'analytics'
+	AND table_name = 'trip'
+ORDER BY
+	ordinal_position;
+
+SELECT day_of_week,
+COUNT(*) AS count
+FROM analytics.trip
+GROUP BY day_of_week
+ORDER BY count 
+DESC;
 
 SELECT pickup_location, dropoff_location, booking_status, ride_id, rider_id, ride_type
 FROM analytics.trip

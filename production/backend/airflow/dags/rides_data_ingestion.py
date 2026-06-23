@@ -15,7 +15,6 @@ print(f"📁 Files in backend: {list(BACKEND_DIR.iterdir()) if BACKEND_DIR.exist
 
 import logging
 import redis
-import builtins
 import json
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -294,29 +293,26 @@ def transform_data(**context):
 # Task 3: Load models and implement Machine learinng models in vehicle_arrival_at, vtat_minutes, and ctat_minutes columns
 # ================================================================
 def implement_ml_models(**context):
-    """Implement ML models to predict:
-    - vtat_minutes (Vehicle Time to Arrival)
-    - ctat_minutes (Customer Time to Arrival)
-    - vehicle_arrival_at (timestamp when vehicle arrives)
     """
+    Load CTAT/VTAT models and predict vtat_minutes, ctat_minutes, vehicle_arrival_at.
+    Falls back gracefully if VTAT model fails to load.
+    """
+    import builtins  # ← protect against 'hash' column shadowing builtin
+    _hash = builtins.hash
+
     try:
-        # Load transformed data
         transformed_path = context["task_instance"].xcom_pull(
-            task_ids="transform_data", key="transformed_path",
+            task_ids="transform_data", key="transformed_path"
         )
-
         if not transformed_path:
-            raise ValueError("No transformed parquet path found in XCom")
-        
+            raise ValueError("No transformed path in XCom")
+
         df = pd.read_parquet(transformed_path)
-        logger.info(f"✅ Loaded transformed dataframe with {len(df)} rows for ML predictions")
+        logger.info(f"✅ Loaded {len(df)} rows for ML predictions")
 
-        # ================================================================
-        # Load ML Models
-        # ================================================================
-
-        MODEL_LOADER_AVAILABLE = False
+        # ── Import ModelLoader ────────────────────────────────────
         ctat_model = vtat_model = scaler = le_pickup = le_drop = feature_list = None
+        MODEL_LOADER_AVAILABLE = False
 
         try:
             import sys
@@ -330,69 +326,62 @@ def implement_ml_models(**context):
             logger.info(f"✅ ModelLoader initialized | dir: {ml.models_dir}")
 
         except ImportError as e:
-            logger.warning(f"⚠️ ModelLoader not available: {e}")
+            logger.warning(f"⚠️ ModelLoader import failed: {e}")
 
         if MODEL_LOADER_AVAILABLE:
-            # Load CTAT and VTAT models
-
             logger.info("👷 Loading CTAT and VTAT models...")
-            ctat_models = ml.load_ctat_models()
-            vtat_models = ml.load_vtat_models()
 
-            # Load encoders and scalers
+            ctat_models      = ml.load_ctat_models()
+            vtat_models      = ml.load_vtat_models()
             encoders_scalers = ml.load_encoders_scalers()
-            features_data = ml.load_features()
+            features_data    = ml.load_features()
 
-            # Get the best models
-            ctat_model = ctat_models.get("best_model")
-            vtat_model = vtat_models.get("best_model")
-            scaler = encoders_scalers.get("scaler")
-            le_pickup = encoders_scalers.get("le_pickup")
-            le_drop = encoders_scalers.get("le_drop")
+            ctat_model   = ctat_models.get("best_model")
+            vtat_model   = vtat_models.get("best_model")
+            scaler       = encoders_scalers.get("scaler_ultra") or encoders_scalers.get("scaler")
+            le_pickup    = encoders_scalers.get("le_pickup")
+            le_drop      = encoders_scalers.get("le_drop")
             feature_list = features_data.get("features_ultra")
 
             logger.info(f"📊 CTAT model loaded: {ctat_model is not None}")
             logger.info(f"📊 VTAT model loaded: {vtat_model is not None}")
             logger.info(f"📊 Scaler loaded: {scaler is not None}")
             logger.info(f"📊 Feature list: {len(feature_list) if feature_list else 0} features")
-        else:
-            logger.warning("⚠️ Using default fallback values for vtat/ctat")
 
-        # Vehicle type encoding mapping
+        # ── Model readiness — allow partial (CTAT only) ───────────
+        ctat_ready = ctat_model is not None and scaler is not None and feature_list is not None
+        vtat_ready = vtat_model is not None and scaler is not None and feature_list is not None
+
+        if ctat_ready and not vtat_ready:
+            logger.warning(
+                "⚠️ VTAT model unavailable (likely libgomp missing) — "
+                "will derive VTAT as 30% of CTAT prediction"
+            )
+        if not ctat_ready:
+            logger.warning("⚠️ CTAT model unavailable — using duration_minutes as fallback")
+
+        # Vehicle type encoding
         VEHICLE_TYPE_ENCODING = {
-            'Alphard': 0, 
-            'HRV': 1, 
-            'Go Sedan': 2,
-            'Innova': 3, 
-            'Premier Sedan': 4, 
-            'Brio': 5, 
-            'Terios': 6
+            'Auto': 0, 'Car': 1, 'Go Sedan': 2,
+            'Motorcycle': 3, 'Premier Sedan': 4, 'eBike': 5, 'Uber XL': 6,
+            'Alphard': 7, 'HRV': 8, 'Innova': 9, 'Brio': 10, 'Terios': 11,
         }
 
-        # Prepare features for prediction
         def prepare_features(row) -> pd.DataFrame:
-            """Extract features for ML prediction"""
             try:
-                _hash = builtins.hash # Safe reference to builtin
+                vehicle_type    = str(row.get("ride_type", "Car"))
+                vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 1)
 
-                # Get vehicle type encoding
-                vehicle_type = row.get("ride_type", "Brio")
-                vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 5)
-
-                # Get time features
                 created_at = row.get("created_at")
                 if created_at and pd.notna(created_at):
-                    ts = pd.to_datetime(created_at)
-                    hour = ts.hour
-                    day_of_week = ts.dayofweek()
-                
+                    ts          = pd.to_datetime(created_at)
+                    hour        = ts.hour
+                    day_of_week = ts.weekday()
                 else:
-                    hour = 12
-                    day_of_week = 3
-                
-                # Encode pickup and drop locations
-                pickup = str(row.get('pickup_location', ''))
-                dropoff = str(row.get('dropoff_location', ''))
+                    hour, day_of_week = 12, 3
+
+                pickup  = str(row.get("pickup_location", ""))
+                dropoff = str(row.get("dropoff_location", ""))
 
                 def encode_loc(encoder, val):
                     if encoder is not None and val:
@@ -400,125 +389,101 @@ def implement_ml_models(**context):
                             return int(encoder.transform([val])[0])
                         except Exception:
                             pass
-                    
+                    # FIX: use _hash (builtins.hash), not hash (which is shadowed by parquet column)
                     return abs(_hash(val)) % 1000
 
                 pickup_encoded = encode_loc(le_pickup, pickup)
-                drop_encoded = encode_loc(le_drop, dropoff)
-                route_cluster = abs(_hash(f"{pickup_encoded}_{drop_encoded}")) % 100
-                distance_km = float(row.get("distance_km", 10.0) or 10.0)
+                drop_encoded   = encode_loc(le_drop, dropoff)
+                # FIX: _hash not hash
+                route_cluster  = abs(_hash(f"{pickup_encoded}_{drop_encoded}")) % 100
+                distance_km    = float(row.get("distance_km", 10.0) or 10.0)
 
-                # Calculate time-based features
-                is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
+                is_peak    = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
                 is_weekend = 1 if day_of_week >= 5 else 0
-                is_night = 1 if hour >= 22 or hour < 6 else 0
+                is_night   = 1 if hour >= 22 or hour < 6 else 0
 
-                # Cylical encoding
-                hour_sin = np.sin(2 * np.pi * hour / 24)
-                hour_cos = np.cos(2 * np.pi * hour / 24)
-                day_sin = np.sin(2 * np.pi * day_of_week / 7)
-                day_cos = np.cos(2 * np.pi * day_of_week / 7)
-
-                # Create feature dict
-                features = {
-                    'Pickup Encoded': pickup_encoded,
-                    'Drop Encoded': drop_encoded,
+                feat = {
+                    'Pickup Encoded':       pickup_encoded,
+                    'Drop Encoded':         drop_encoded,
                     'Vehicle Type Encoded': vehicle_encoded,
-                    'hour': hour,
-                    'day_of_week': day_of_week,
-                    'route_cluster': route_cluster,
-                    'Ride Distance': distance_km,
-                    'is_peak_hour': is_peak_hour,
-                    'is_weekend': is_weekend,
-                    'is_night': is_night,
-                    'hour_sin': hour_sin,
-                    'hour_cos': hour_cos,
-                    'day_sin': day_sin,
-                    'day_cos': day_cos,
+                    'hour':                 hour,
+                    'day_of_week':          day_of_week,
+                    'route_cluster':        route_cluster,
+                    'Ride Distance':        distance_km,
+                    'is_peak_hour':         is_peak,
+                    'is_weekend':           is_weekend,
+                    'is_night':             is_night,
+                    'hour_sin':             np.sin(2 * np.pi * hour / 24),
+                    'hour_cos':             np.cos(2 * np.pi * hour / 24),
+                    'day_sin':              np.sin(2 * np.pi * day_of_week / 7),
+                    'day_cos':              np.cos(2 * np.pi * day_of_week / 7),
                 }
 
-                features_df = pd.DataFrame([features])
+                feat_df = pd.DataFrame([feat])
                 if feature_list:
                     for col in feature_list:
-                        if col not in features_df.columns:
-                            features_df[col] = 0
-                    return features_df[feature_list]
-                
-                return 
-            
+                        if col not in feat_df.columns:
+                            feat_df[col] = 0
+                    return feat_df[feature_list]
+                return feat_df
+
             except Exception as e:
-                logger.error(f"❌ Error preparing features for row {row.get('ride_id')}: {e}")
+                logger.debug(f"Feature prep failed for {row.get('ride_id')}: {e}")
                 return None
-               
-        # Apply ML predictions
-        logger.info("👷 Applying ML predictions for vtat and ctat...")
 
-        models_ready = (
-            ctat_model is not None and
-            vtat_model is not None and
-            scaler is not None
-        )
-
-        vtat_predictions = []
-        ctat_predictions = []
+        # ── Predict per row ───────────────────────────────────────
+        vtat_list, ctat_list = [], []
 
         for idx, row in df.iterrows():
             try:
-                features_df = prepare_features(row)
-                duration = float(row.get('duration_minutes') or 20.0)
+                duration  = float(row.get("duration_minutes") or 20.0)
+                avg_ctat  = float(row.get("avg_ctat") or duration)
+                avg_vtat  = float(row.get("avg_vtat") or avg_ctat * 0.3)
 
-                if models_ready and features_df is not None:
-                    # Scale features
-                    features_scaled = scaler.transform(features_df)
+                feat_df = prepare_features(row)
 
-                    # Predict CTAT and VTAT
+                # CTAT prediction
+                if ctat_ready and feat_df is not None:
                     try:
-                       ctat_pred = max(float(ctat_model.predict(features_scaled)[0]), 5.0)  # Minimum 5 minutes
-                    except Exception:
-                        logger.error(f"❌ Error predicting CTAT for row {idx}: {e}")
-                        ctat_pred = duration
-
-                    try:
-                        vtat_pred = max(float(vtat_model.predict(features_scaled)[0]), 2.0)  # Minimum 2 minutes
+                        scaled = scaler.transform(feat_df)
+                        ctat   = max(float(ctat_model.predict(scaled)[0]), 5.0)
                     except Exception as e:
-                        logger.error(f"❌ Error predicting VTAT for row {idx}: {e}")
-                        vtat_pred = ctat_pred * 0.3
-
+                        logger.debug(f"CTAT predict failed row {idx}: {e}")
+                        ctat = avg_ctat
                 else:
-                    # Fallback values
-                    ctat_pred = float(row.get("avg_ctat") or row.get("duration_minutes") or 20.0)
-                    vtat_pred = float(row.get("avg_vtat") or ctat_pred * 0.3)
-                    ctat_pred = max(ctat_pred, 5.0)
-                    vtat_pred = max(vtat_pred, 2.0)
+                    ctat = avg_ctat
+
+                # VTAT prediction — use model if available, else derive from CTAT
+                if vtat_ready and feat_df is not None:
+                    try:
+                        scaled = scaler.transform(feat_df)
+                        vtat   = max(float(vtat_model.predict(scaled)[0]), 2.0)
+                    except Exception as e:
+                        logger.debug(f"VTAT predict failed row {idx}: {e}")
+                        vtat = max(ctat * 0.3, 2.0)
+                else:
+                    # Derive VTAT from parquet avg_vtat or 30% of CTAT
+                    vtat = max(avg_vtat, 2.0)
 
             except Exception as e:
-                logger.debug(f"⚠️ Row {idx} prediction error: {e}")
-                # Use fallback values
-                ctat_pred = 20.0
-                vtat_pred = 6.0
+                logger.debug(f"Row {idx} error: {e}")
+                ctat = 20.0
+                vtat = 6.0
 
+            ctat_list.append(round(ctat, 2))
+            vtat_list.append(round(vtat, 2))
 
-            # Append predictions
-            ctat_predictions.append(round(ctat_pred, 2))
-            vtat_predictions.append(round(vtat_pred, 2))
+        df["ctat_minutes"] = ctat_list
+        df["vtat_minutes"] = vtat_list
 
-        # ===============================================================
-        # Implement predictions into dataframe
-        # ===============================================================
-        df["vtat_minutes"] = vtat_predictions
-        df["ctat_minutes"] = ctat_predictions
-
-        # ==============================================================
-        # Compute timestamp
-        # ==============================================================
-        def add_minutes(row, col, minutes_col):
-            ts = row.get(col)
+        # ── Compute timestamps ────────────────────────────────────
+        def add_minutes(row, base_col, minutes_col):
+            ts   = row.get(base_col)
             mins = row.get(minutes_col, 10.0)
             if ts and pd.notna(ts):
                 return pd.to_datetime(ts) + pd.Timedelta(minutes=float(mins))
-            
             return None
-        
+
         df["vehicle_arrival_at"] = df.apply(
             lambda r: add_minutes(r, "created_at", "vtat_minutes"), axis=1
         )
@@ -526,26 +491,30 @@ def implement_ml_models(**context):
             lambda r: add_minutes(r, "created_at", "ctat_minutes"), axis=1
         )
 
-        # Store encoded features
-        if le_pickup and le_drop:
+        # ── Store encoded features ────────────────────────────────
+        if le_pickup:
             df["pickup_encoded"] = df["pickup_location"].apply(
                 lambda x: int(le_pickup.transform([str(x)])[0])
                 if pd.notna(x) else 0
             )
+        if le_drop:
             df["drop_encoded"] = df["dropoff_location"].apply(
                 lambda x: int(le_drop.transform([str(x)])[0])
                 if pd.notna(x) else 0
             )
+
+        # FIX: _hash not hash
         df["route_cluster"] = df.apply(
-            lambda r: abs(builtins.hash(
+            lambda r: abs(_hash(
                 f"{r.get('pickup_encoded', 0)}_{r.get('drop_encoded', 0)}"
-            )) % 100, axis=1
+            )) % 100,
+            axis=1
         )
 
-        logger.info(f"📊 ML Prediction Statistics:")
-        logger.info(f"   CTAT avg: {df['ctat_minutes'].mean():.1f} min | min: {df['ctat_minutes'].min():.1f} | max: {df['ctat_minutes'].max():.1f}")
-        logger.info(f"   VTAT avg: {df['vtat_minutes'].mean():.1f} min | min: {df['vtat_minutes'].min():.1f} | max: {df['vtat_minutes'].max():.1f}")
-        logger.info(f"   Models used: {models_ready}")
+        logger.info("📊 ML Prediction Statistics:")
+        logger.info(f"   CTAT avg: {df['ctat_minutes'].mean():.1f} | min: {df['ctat_minutes'].min():.1f} | max: {df['ctat_minutes'].max():.1f}")
+        logger.info(f"   VTAT avg: {df['vtat_minutes'].mean():.1f} | min: {df['vtat_minutes'].min():.1f} | max: {df['vtat_minutes'].max():.1f}")
+        logger.info(f"   CTAT model used: {ctat_ready} | VTAT model used: {vtat_ready}")
 
         ml_path = os.path.join(
             TEMP_DIR,
@@ -553,19 +522,20 @@ def implement_ml_models(**context):
         )
         df.to_parquet(ml_path, index=False)
         context["task_instance"].xcom_push(key="ml_transformed_path", value=ml_path)
-        logger.info(f"✅ ML transformed data saved to {ml_path} with {len(df)} records")
+        logger.info(f"✅ ML predictions saved to {ml_path}")
 
         return {
-            "rows_ml_transformed": len(df),
-            "ctat_avg": round(df['ctat_minutes'].mean(), 2),
-            "vtat_avg": round(df['vtat_minutes'].mean(), 2),
-            "models_used": models_ready,
-            "ml_file_path": ml_path,
+            "rows_processed": len(df),
+            "ctat_avg":        round(df["ctat_minutes"].mean(), 2),
+            "vtat_avg":        round(df["vtat_minutes"].mean(), 2),
+            "ctat_model_used": ctat_ready,
+            "vtat_model_used": vtat_ready,
+            "file_path":       ml_path,
         }
 
     except Exception as e:
         logger.exception("❌ Failed implementing ML models")
-        raise 
+        raise
 
 # ================================================================
 # Task 4: Load Into PostgreSQL
@@ -597,35 +567,35 @@ def load_to_postgres(**context):
 
         # Columns matching the analytics.trip schema
         trip_cols = [
-            "ride_id",
-            "rider_id",
-            "driver_status",
-            "pickup_location",
-            "dropoff_location",
-            "pickup_lat",
-            "pickup_lng",
-            "dropoff_lat",
-            "dropoff_lng",
-            "status",
-            "booking_status",
-            "ride_type",
-            "estimated_fare",
-            "actual_fare",
-            "distance_km",
-            "duration_minutes",
-            "driver_rating",
-            "created_at",
-            "vehicle_arrival_at",
-            "completed_at",
-            "day_of_week",
-            "demand_pressure",
-            "hour",
-            # NEW COLUMNS
-            "vtat_minutes",
-            "ctat_minutes",
-            "pickup_encoded",
-            "drop_encoded",
-            "route_cluster"
+            "ride_id",           # VARCHAR PK
+            "rider_id",          # VARCHAR NOT NULL
+            "driver_id",         # VARCHAR
+            "driver_status",     # VARCHAR
+            "pickup_location",   # VARCHAR
+            "dropoff_location",  # VARCHAR
+            "pickup_lat",        # DOUBLE PRECISION
+            "pickup_lng",        # DOUBLE PRECISION
+            "dropoff_lat",       # DOUBLE PRECISION
+            "dropoff_lng",       # DOUBLE PRECISION
+            "status",            # VARCHAR
+            "booking_status",    # VARCHAR
+            "ride_type",         # VARCHAR
+            "estimated_fare",    # DOUBLE PRECISION
+            "actual_fare",       # DOUBLE PRECISION
+            "distance_km",       # DOUBLE PRECISION
+            "duration_minutes",  # DOUBLE PRECISION
+            "driver_rating",     # DOUBLE PRECISION
+            "day_of_week",       # INTEGER
+            "demand_pressure",   # DOUBLE PRECISION
+            "hour",              # INTEGER
+            "created_at",        # TIMESTAMP
+            "vehicle_arrival_at",# TIMESTAMP
+            "completed_at",      # TIMESTAMP (was VARCHAR — now fixed)
+            "pickup_encoded",    # INTEGER
+            "drop_encoded",      # INTEGER
+            "route_cluster",     # INTEGER
+            "vtat_minutes",      # DOUBLE PRECISION
+            "ctat_minutes",      # DOUBLE PRECISION
         ]
 
         # Keep only columns that exist

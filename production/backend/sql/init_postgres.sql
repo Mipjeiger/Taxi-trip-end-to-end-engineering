@@ -1,4 +1,4 @@
--- Active: 1780295933317@@127.0.0.1@5433@taxi_db
+-- Active: 1781591252887@@localhost@5433@taxi_db
 -- DuckDB Analytics Schema (Local Tables)
 -- PostgreSQL schema for analytics
 CREATE SCHEMA IF NOT EXISTS analytics;
@@ -39,6 +39,7 @@ ADD COLUMN demand_pressure DOUBLE PRECISION;
 
 ALTER TABLE analytics.trip ADD COLUMN hour INTEGER;
 
+DROP TABLE analytics.trip CASCADE;
 CREATE TABLE IF NOT EXISTS analytics.trip (
     ride_id VARCHAR PRIMARY KEY,
     rider_id VARCHAR NOT NULL,
@@ -355,10 +356,29 @@ SELECT column_name, data_type, is_nullable
 FROM information_schema.columns
 WHERE table_schema = 'analytics' AND table_name = 'trip'
 ORDER BY ordinal_position;
+
+-- check null value in column
+SELECT 
+	COUNT(*) AS total_rows,
+	SUM(CASE WHEN driver_id IS NULL THEN 1 ELSE 0 END) AS null_count,
+	COUNT(driver_id) AS non_null_count
+FROM analytics.trip; -- Assume for driver_id is null is Offline status
+
+-- delete rows which are NULL values
+DELETE FROM analytics.trip
+WHERE driver_id IS NULL;
+
+SELECT COUNT(*) FROM analytics.trip WHERE driver_id IS NULL;
 ------------------------------------------------------------
+-- Truncate DB
 TRUNCATE analytics.trip;
+
 -- Select data
 SELECT * FROM analytics.trip;
+
+SELECT driver_status
+FROM analytics.trip
+WHERE driver_status = 'Offline';
 
 SELECT * FROM analytics.drivers;
 
@@ -415,22 +435,3 @@ WHERE ride_id IS NOT NULL
 	AND ride_type = 'Alphard'
 GROUP BY pickup_location, dropoff_location, ride_type, hour, day_of_week, distance_km
 ORDER BY trip_count DESC;
-
--- create ml_predictor table database
-DROP TABLE IF EXISTS analytics.ml_predictor;
-CREATE TABLE IF NOT EXISTS analytics.ml_predictor (
-    pickup_encoded INTEGER,
-    drop_encoded INTEGER,
-    vehicle_encoded INTEGER,
-    hour INTEGER,
-    day_of_week INTEGER,
-    route_cluster INTEGER,
-    distance_km DOUBLE PRECISION,
-    is_peak_hour INTEGER,
-    is_weekend INTEGER,
-    is_night INTEGER,
-    hour_sin DOUBLE PRECISION,
-    hour_cos DOUBLE PRECISION,
-    day_sin DOUBLE PRECISION,
-    day_cos DOUBLE PRECISION
-);

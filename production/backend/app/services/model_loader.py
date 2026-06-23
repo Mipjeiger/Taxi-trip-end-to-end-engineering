@@ -4,34 +4,52 @@ import os
 from pathlib import Path
 #import tensorflow as tf
 from typing import Dict, Any
+from dotenv import load_dotenv
+
+# Configuration .env
+BASE_DIR = Path(__file__).parent.parent.parent.parent 
+ENV_PATH = BASE_DIR / '.env'
+load_dotenv(dotenv_path=ENV_PATH)
 
 class ModelLoader:
     """Utility class to load ML models from dir."""
     def __init__(self, models_dir: str = None):
         
-        if models_dir is None:
+        if models_dir is not None:
+            self.models_dir = Path(models_dir)
+        else:
             possible_paths = [
                '/app/models',                    # Docker backend
+               '/app/backend/models',             # Local development
+               '/backend/models',                 # Alternative local
                 '/opt/airflow/backend/models',    # Docker Airflow
                 '/opt/airflow/models',            # Alternative Airflow
-                './models',                       # Local
-                '../models',                      # Local relative
+                #'./models',                       # Local
+                #'../models',                      # Local relative
             ]
             
+            self.models_dir = None
             for path in possible_paths:
-                if Path(path).exists():
+                if Path(path).exists() and any(Path(path).iterdir()):
                     self.models_dir = Path(path)
+                    print(f"✅ Found models directory: {self.models_dir}")
                     break
 
-            # Fallback to default
-            if models_dir is None:
-                models_dir = '/app/models'
+            if self.models_dir is None:
+                # Last resort: check env variable
+                env_path = os.getenv('MODELS_PATH')
+                if env_path and Path(env_path).exists():
+                    self.models_dir = Path(env_path)
+                    print(f"✅ Found models directory from env: {self.models_dir}")
+                else:
+                    self.models_dir = Path('/opt/airflow/models')
+                    print(f"⚠️ Warning: No models directory found in standard paths. Defaulting to {self.models_dir}. Please check the path.")
                 
-        self.models_dir = Path(models_dir)
         if not self.models_dir.exists():
             print(f"⚠️ Warning: Models directory {self.models_dir} does not exist. Please check the path.")
         else:
-            print(f"✅ Models directory set to: {self.models_dir}")
+            files = list(self.models_dir.iterdir())
+            print(f"✅ Models directory: {self.models_dir} ({len(files)} files)")
 
     # CTAT models
     def load_ctat_models(self) -> Dict[str, Any]:
@@ -106,6 +124,14 @@ class ModelLoader:
         """Load models dictionary"""
         return self._load_pickle('models_ultra.pkl')
     
+    def load_config(self) -> Dict:
+        config_path = self.models_dir / 'config_summary.json'
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        print(f"⚠️ Warning: Config file {config_path} does not exist.")
+        return {}
+    
     # Config
     def load_config(self) -> Dict:
         """Load config file."""
@@ -120,17 +146,18 @@ class ModelLoader:
     def _load_pickle(self, filename: str):
         """Load pickle file"""
         file_path = self.models_dir / filename
-        if file_path.exists():
-            try:
-                with open(file_path, 'rb') as f:
-                    return pickle.load(f)
-            except Exception as e:
-                print(f"❌ Error occurred while loading {file_path}: {e}")
-                return None
-            
-        else:
+        if not file_path.exists():
             print(f"⚠️ Warning: Pickle file {file_path} does not exist.")
-        return None
+            return None
+        try:
+            with open(file_path, 'rb') as f:
+                obj = pickle.load(f)
+            print(f"✅ Successfully loaded {file_path}")
+            return obj
+            
+        except Exception as e:
+            print(f"❌ Error occurred while loading {file_path}: {e}")
+            return None
     
     # Load all models
     def load_all_models(self) -> Dict[str, Any]:
@@ -138,8 +165,8 @@ class ModelLoader:
         all_models = {
             'ctat': self.load_ctat_models(),
             'vtat': self.load_vtat_models(),
-            'price': self.load_price_model(),
-            'time': self.load_time_model(),
+            #'price': self.load_price_model(),
+            #'time': self.load_time_model(),
             'encoders_scalers': self.load_encoders_scalers(),
             'features': self.load_features(),
             'models_dict': self.load_models_dict(),

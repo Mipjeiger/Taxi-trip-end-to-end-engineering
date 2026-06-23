@@ -328,6 +328,7 @@ services:
       POSTGRES_PORT_AIRFLOW: ${POSTGRES_PORT_AIRFLOW}
       POSTGRES_DB_AIRFLOW: ${POSTGRES_DB_AIRFLOW}
       TEMP_DIR: /tmp/airflow_taxi_pipeline
+      MODELS_PATH: /opt/airflow/models
     volumes:
       - ./backend/airflow/dags:/opt/airflow/dags
       - ./backend/airflow/plugins:/opt/airflow/plugins
@@ -395,6 +396,7 @@ services:
       POSTGRES_HOST_AIRFLOW: ${POSTGRES_HOST_AIRFLOW}
       PARQUET_PATH: ${PARQUET_PATH}
       TEMP_DIR: /tmp/airflow_taxi_pipeline
+      MODELS_PATH: /opt/airflow/models
     volumes:
       - ./backend/airflow/dags:/opt/airflow/dags
       - ./backend/airflow/plugins:/opt/airflow/plugins

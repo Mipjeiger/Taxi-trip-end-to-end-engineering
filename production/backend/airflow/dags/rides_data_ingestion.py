@@ -15,6 +15,7 @@ print(f"📁 Files in backend: {list(BACKEND_DIR.iterdir()) if BACKEND_DIR.exist
 
 import logging
 import redis
+import builtins
 import json
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -313,26 +314,34 @@ def implement_ml_models(**context):
         # ================================================================
         # Load ML Models
         # ================================================================
+
+        MODEL_LOADER_AVAILABLE = False
+        ctat_model = vtat_model = scaler = le_pickup = le_drop = feature_list = None
+
         try:
             import sys
-            sys.path.insert(0, 'opt/airflow/backend')
+            for p in ['/opt/airflow/backend', '/opt/airflow']:
+                if p not in sys.path:
+                    sys.path.insert(0, p)
 
-            from app.services.model_loader import model_loader
+            from app.services.model_loader import ModelLoader
+            ml = ModelLoader()
             MODEL_LOADER_AVAILABLE = True
-            logger.info("✅ Model loader imported successfully for ML predictions")
+            logger.info(f"✅ ModelLoader initialized | dir: {ml.models_dir}")
+
         except ImportError as e:
-            logger.warning(f"⚠️ Model loader import failed for ML predictions: {e}")
-            MODEL_LOADER_AVAILABLE = False
+            logger.warning(f"⚠️ ModelLoader not available: {e}")
 
         if MODEL_LOADER_AVAILABLE:
             # Load CTAT and VTAT models
+
             logger.info("👷 Loading CTAT and VTAT models...")
-            ctat_models = model_loader.load_ctat_models()
-            vtat_models = model_loader.load_vtat_models()
+            ctat_models = ml.load_ctat_models()
+            vtat_models = ml.load_vtat_models()
 
             # Load encoders and scalers
-            encoders_scalers = model_loader.load_encoders_scalers()
-            features_data = model_loader.load_features()    
+            encoders_scalers = ml.load_encoders_scalers()
+            features_data = ml.load_features()
 
             # Get the best models
             ctat_model = ctat_models.get("best_model")
@@ -340,21 +349,14 @@ def implement_ml_models(**context):
             scaler = encoders_scalers.get("scaler")
             le_pickup = encoders_scalers.get("le_pickup")
             le_drop = encoders_scalers.get("le_drop")
-            feature_list = features_data.get("feature_ultra")
+            feature_list = features_data.get("features_ultra")
 
-            logger.info(f"📊 CTAT Model loaded: {ctat_model is not None}")
-            logger.info(f"📊 VTAT Model loaded: {vtat_model is not None}")
+            logger.info(f"📊 CTAT model loaded: {ctat_model is not None}")
+            logger.info(f"📊 VTAT model loaded: {vtat_model is not None}")
             logger.info(f"📊 Scaler loaded: {scaler is not None}")
             logger.info(f"📊 Feature list: {len(feature_list) if feature_list else 0} features")
-
         else:
-            logger.warning("⚠️ ML models not available, using default values for vtat and ctat")
-            ctat_model = None
-            vtat_model = None
-            scaler = None
-            le_pickup = None
-            le_drop = None
-            feature_list = None
+            logger.warning("⚠️ Using default fallback values for vtat/ctat")
 
         # Vehicle type encoding mapping
         VEHICLE_TYPE_ENCODING = {
@@ -368,20 +370,21 @@ def implement_ml_models(**context):
         }
 
         # Prepare features for prediction
-        def prepare_features(row):
+        def prepare_features(row) -> pd.DataFrame:
             """Extract features for ML prediction"""
             try:
+                _hash = builtins.hash # Safe reference to builtin
+
                 # Get vehicle type encoding
                 vehicle_type = row.get("ride_type", "Brio")
                 vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 5)
 
                 # Get time features
                 created_at = row.get("created_at")
-                if created_at:
-                    if isinstance(created_at, str):
-                        created_at = pd.to_datetime(created_at)
-                    hour = created_at.hour
-                    day_of_week = created_at.weekday()
+                if created_at and pd.notna(created_at):
+                    ts = pd.to_datetime(created_at)
+                    hour = ts.hour
+                    day_of_week = ts.dayofweek()
                 
                 else:
                     hour = 12
@@ -391,23 +394,19 @@ def implement_ml_models(**context):
                 pickup = str(row.get('pickup_location', ''))
                 dropoff = str(row.get('dropoff_location', ''))
 
-                if le_pickup is not None and pickup:
-                    try:
-                        pickup_encoded = le_pickup.transform([pickup])[0]
-                    except:
-                        pickup_encoded = abs(hash(pickup)) % 1000
+                def encode_loc(encoder, val):
+                    if encoder is not None and val:
+                        try:
+                            return int(encoder.transform([val])[0])
+                        except Exception:
+                            pass
+                    
+                    return abs(_hash(val)) % 1000
 
-                else:
-                    pickup_encoded = abs(hash(pickup)) % 1000
-
-                if le_drop is not None and dropoff:
-                    try:
-                        drop_encoded = le_drop.transform([dropoff])[0]
-                    except:
-                        drop_encoded = abs(hash(dropoff)) % 1000
-
-                else:
-                    drop_encoded = abs(hash(dropoff)) % 1000
+                pickup_encoded = encode_loc(le_pickup, pickup)
+                drop_encoded = encode_loc(le_drop, dropoff)
+                route_cluster = abs(_hash(f"{pickup_encoded}_{drop_encoded}")) % 100
+                distance_km = float(row.get("distance_km", 10.0) or 10.0)
 
                 # Calculate time-based features
                 is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
@@ -419,13 +418,6 @@ def implement_ml_models(**context):
                 hour_cos = np.cos(2 * np.pi * hour / 24)
                 day_sin = np.sin(2 * np.pi * day_of_week / 7)
                 day_cos = np.cos(2 * np.pi * day_of_week / 7)
-
-                # Route cluster
-                route_key = f"{pickup_encoded}_{drop_encoded}"
-                route_cluster = abs(hash(route_key)) % 100
-
-                # Distance
-                distance_km = float(row.get("distance_km", 10.0))
 
                 # Create feature dict
                 features = {
@@ -445,15 +437,14 @@ def implement_ml_models(**context):
                     'day_cos': day_cos,
                 }
 
+                features_df = pd.DataFrame([features])
                 if feature_list:
-                    # Ensure all features exist
                     for col in feature_list:
-                        if col not in features:
-                            features[col] = 0
-                    return pd.DataFrame([features])[feature_list]
+                        if col not in features_df.columns:
+                            features_df[col] = 0
+                    return features_df[feature_list]
                 
-                else:
-                    return pd.DataFrame([features])
+                return 
             
             except Exception as e:
                 logger.error(f"❌ Error preparing features for row {row.get('ride_id')}: {e}")
@@ -462,124 +453,119 @@ def implement_ml_models(**context):
         # Apply ML predictions
         logger.info("👷 Applying ML predictions for vtat and ctat...")
 
+        models_ready = (
+            ctat_model is not None and
+            vtat_model is not None and
+            scaler is not None
+        )
+
         vtat_predictions = []
         ctat_predictions = []
 
         for idx, row in df.iterrows():
             try:
                 features_df = prepare_features(row)
+                duration = float(row.get('duration_minutes') or 20.0)
 
-                if features_df is not None and scaler is not None and ctat_model is not None and vtat_model is not None:
+                if models_ready and features_df is not None:
                     # Scale features
                     features_scaled = scaler.transform(features_df)
 
                     # Predict CTAT and VTAT
                     try:
-                        ctat_pred = float(ctat_model.predict(features_scaled)[0])
-                        ctat_pred = max(ctat_pred, 5.0) # Minimum 5 minutes
-                    except Exception as e:
+                       ctat_pred = max(float(ctat_model.predict(features_scaled)[0]), 5.0)  # Minimum 5 minutes
+                    except Exception:
                         logger.error(f"❌ Error predicting CTAT for row {idx}: {e}")
-                        ctat_pred = float(row.get("ctat_minutes", 2.0))
+                        ctat_pred = duration
 
                     try:
-                        vtat_pred = float(vtat_model.predict(features_scaled)[0])
-                        vtat_pred = max(vtat_pred, 2.0) # Minimum 2 minutes
+                        vtat_pred = max(float(vtat_model.predict(features_scaled)[0]), 2.0)  # Minimum 2 minutes
                     except Exception as e:
                         logger.error(f"❌ Error predicting VTAT for row {idx}: {e}")
                         vtat_pred = ctat_pred * 0.3
 
                 else:
                     # Fallback values
-                    duration = float(row.get('duration_minutes', 20.0))
-                    ctat_pred = duration
-                    vtat_pred = ctat_pred * 0.3
-
-                    # If models not available, log warning
-                    if ctat_model is None and vtat_model is None:
-                        if idx == 0:
-                            logger.warning("⚠️ ML models not available, using default values for vtat and ctat")
-
-                
-                # Append predictions
-                ctat_predictions.append(ctat_pred)
-                vtat_predictions.append(vtat_pred)
+                    ctat_pred = float(row.get("avg_ctat") or row.get("duration_minutes") or 20.0)
+                    vtat_pred = float(row.get("avg_vtat") or ctat_pred * 0.3)
+                    ctat_pred = max(ctat_pred, 5.0)
+                    vtat_pred = max(vtat_pred, 2.0)
 
             except Exception as e:
-                logger.error(f"❌ Error predicting ML for row {idx}: {e}")
+                logger.debug(f"⚠️ Row {idx} prediction error: {e}")
                 # Use fallback values
-                ctat_pred = float(row.get("duration_minutes", 20.0))
-                vtat_pred = ctat_pred * 0.3
-                ctat_predictions.append(ctat_pred)
-                vtat_predictions.append(vtat_pred)
+                ctat_pred = 20.0
+                vtat_pred = 6.0
 
-        # ================================================================
-        # Add Predictions to Dataframe
-        # ================================================================
-        df['vtat_minutes'] = vtat_predictions
-        df['ctat_minutes'] = ctat_predictions
 
-        # Calculate vehicle_arrival_at from vtat_minutes
-        def calculate_vehicle_arrival(row):
-            created_at = row.get("created_at")
-            vtat_min = row.get("vtat_minutes", 10.0)
+            # Append predictions
+            ctat_predictions.append(round(ctat_pred, 2))
+            vtat_predictions.append(round(vtat_pred, 2))
 
-            if created_at:
-                if isinstance(created_at, str):
-                    created_at = pd.to_datetime(created_at)
-                return created_at + pd.Timedelta(minutes=float(vtat_min))
+        # ===============================================================
+        # Implement predictions into dataframe
+        # ===============================================================
+        df["vtat_minutes"] = vtat_predictions
+        df["ctat_minutes"] = ctat_predictions
+
+        # ==============================================================
+        # Compute timestamp
+        # ==============================================================
+        def add_minutes(row, col, minutes_col):
+            ts = row.get(col)
+            mins = row.get(minutes_col, 10.0)
+            if ts and pd.notna(ts):
+                return pd.to_datetime(ts) + pd.Timedelta(minutes=float(mins))
             
             return None
         
-        # Apply vehicle_arrival_at calculation
-        df['vehicle_arrival_at'] = df.apply(calculate_vehicle_arrival, axis=1)
-
-        # Calculate completed_at
-        def calculate_completed_at(row):
-            created_at = row.get("created_at")
-            ctat_min = row.get("ctat_minutes", 20.0)
-
-            if created_at:
-                if isinstance(created_at, str):
-                    created_at = pd.to_datetime(created_at)
-                return created_at + pd.Timedelta(minutes=float(ctat_min))
-            
-            return None
-        
-        # Apply completed_at calculation
-        df['completed_at'] = df.apply(calculate_completed_at, axis=1)
-
-        # ================================================================
-        # Log Statistics
-        # ================================================================
-        logger.info(f"📊 ML Prediction Statistics:")
-        logger.info(f"   - CTAT (duration) avg: {df['ctat_minutes'].mean():.1f} min")
-        logger.info(f"   - VTAT avg: {df['vtat_minutes'].mean():.1f} min")
-        logger.info(f"   - CTAT min: {df['ctat_minutes'].min():.1f} min")
-        logger.info(f"   - VTAT min: {df['vtat_minutes'].min():.1f} min")
-        logger.info(f"   - CTAT max: {df['ctat_minutes'].max():.1f} min")
-        logger.info(f"   - VTAT max: {df['vtat_minutes'].max():.1f} min")
-
-        # Save the updated dataframe
-        ml_transformed_path = os.path.join(
-            TEMP_DIR,
-            f"ml_transformed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet",
+        df["vehicle_arrival_at"] = df.apply(
+            lambda r: add_minutes(r, "created_at", "vtat_minutes"), axis=1
+        )
+        df["completed_at"] = df.apply(
+            lambda r: add_minutes(r, "created_at", "ctat_minutes"), axis=1
         )
 
-        # PUsh the updated Path to Xcom
-        context["task_instance"].xcom_push(key="ml_transformed_path", value=ml_transformed_path)
-        logger.info(f"✅ ML predictions applied and saved to {ml_transformed_path}")
+        # Store encoded features
+        if le_pickup and le_drop:
+            df["pickup_encoded"] = df["pickup_location"].apply(
+                lambda x: int(le_pickup.transform([str(x)])[0])
+                if pd.notna(x) else 0
+            )
+            df["drop_encoded"] = df["dropoff_location"].apply(
+                lambda x: int(le_drop.transform([str(x)])[0])
+                if pd.notna(x) else 0
+            )
+        df["route_cluster"] = df.apply(
+            lambda r: abs(builtins.hash(
+                f"{r.get('pickup_encoded', 0)}_{r.get('drop_encoded', 0)}"
+            )) % 100, axis=1
+        )
+
+        logger.info(f"📊 ML Prediction Statistics:")
+        logger.info(f"   CTAT avg: {df['ctat_minutes'].mean():.1f} min | min: {df['ctat_minutes'].min():.1f} | max: {df['ctat_minutes'].max():.1f}")
+        logger.info(f"   VTAT avg: {df['vtat_minutes'].mean():.1f} min | min: {df['vtat_minutes'].min():.1f} | max: {df['vtat_minutes'].max():.1f}")
+        logger.info(f"   Models used: {models_ready}")
+
+        ml_path = os.path.join(
+            TEMP_DIR,
+            f"ml_transformed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
+        )
+        df.to_parquet(ml_path, index=False)
+        context["task_instance"].xcom_push(key="ml_transformed_path", value=ml_path)
+        logger.info(f"✅ ML transformed data saved to {ml_path} with {len(df)} records")
 
         return {
-            "rows_processed": len(df),
-            "ctat_avg": df['ctat_minutes'].mean(),
-            "vtat_avg": df['vtat_minutes'].mean(),
-            "file_path": ml_transformed_path,
-            "models_used": ctat_model is not None and vtat_model is not None
+            "rows_ml_transformed": len(df),
+            "ctat_avg": round(df['ctat_minutes'].mean(), 2),
+            "vtat_avg": round(df['vtat_minutes'].mean(), 2),
+            "models_used": models_ready,
+            "ml_file_path": ml_path,
         }
-    
+
     except Exception as e:
         logger.exception("❌ Failed implementing ML models")
-        raise e
+        raise 
 
 # ================================================================
 # Task 4: Load Into PostgreSQL

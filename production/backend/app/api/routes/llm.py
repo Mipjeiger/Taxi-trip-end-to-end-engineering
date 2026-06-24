@@ -1,3 +1,4 @@
+from starlette.responses import HTMLResponse
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -10,6 +11,7 @@ import logging
 import time
 import uuid
 import json
+import pandas as pd
 import re
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
@@ -29,6 +31,7 @@ from app.services.trip_retriever import TripRetriever
 from app.models.trip import Trip
 from app.services.llm_audit import llm_monitor
 from app.core.evidently_monitor import evidently_monitor
+from app.services.simple_report_generator import SimpleReportGenerator
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -635,26 +638,75 @@ async def generate_llm_report(days: int = 365, db: AsyncSession = Depends(get_po
 
         report_path = await llm_monitor.generate_report_from_db(db, days)
 
+        # If Evidently fails, generate a simple HTML report as fallback
+        if not report_path:
+            logger.warning("⚠️ Report generation returned no path. Possibly insufficient data.")
+
+            # Generate simple HTML report as fallback
+            query = text(f"""
+                SELECT
+                    created_at as timestamp,
+                    user_id,
+                    response_time_ms,
+                    tokens_used,
+                    prompt,
+                    response
+                FROM analytics.llm_interactions
+                WHERE created_at >= NOW() - INTERVAL '{days} DAY'
+                ORDER BY created_at DESC
+            """)
+
+            result = await db.execute(query)
+            rows = result.fetchall()
+
+            if rows:
+                data = []
+                for row in rows:
+                    data.append({
+                        "timestamp": row[0],
+                        "user_id": row[1] or "unknown",
+                        "response_time_ms": float(row[2]) if row[2] else 0,
+                        "tokens_used": int(row[3]) if row[3] else 0,
+                        "prompt": (row[4] or "")[:100],
+                        "response": (row[5] or "")[:100]
+                    })
+
+                df = pd.DataFrame(data)
+
+                # Generate simple HTML report
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                simple_report_path = llm_monitor.reports_dir / f"simple_llm_report_{timestamp}.html"
+                simple_report = SimpleReportGenerator.generate_stats_report(df, simple_report_path)
+
+                if simple_report:
+                    return {
+                        "status": "success",
+                        "report_path": simple_report,
+                        "report_type": "simple",
+                        "total_records": count,
+                        "message": "Simple report generated (Evidently report failed)"
+                    }
+
         if report_path:
             return {
                 "status": "success",
                 "report_path": report_path,
+                "report_type": "evidently",
                 "days_analyzed": days,
                 "total_records": count,
-                "message": "Report generated successfully from LLM interactions"
+                "message": "Evidently report generated successfully"
             }
         
         else:         
             return {
-                "status": "warning",
-                "message": f"📊 Found {count} records but need at least 2 for report generation.",
-                "total_records": count,
-                "required_records": 2
+                "status": "error",
+                "message": "Could not generate any report",
+                "total_records": count
             }
         
     except Exception as e:
-        logger.error(f"❌ Failed to generate Evidently report: {e}")
-        raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
+        logger.error(f"❌ Failed to generate report: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
     
 @router.get("/evidently/statistics")
 async def get_llm_statistics(db: AsyncSession = Depends(get_postgres_db)):
@@ -703,3 +755,102 @@ async def evidently_health():
             "status": "unhealthy",
             "error": str(e)
         }
+
+@router.post("/evidently/report/UI", response_class=HTMLResponse)
+async def generate_llm_report_ui(days: int = 365, db: AsyncSession = Depends(get_postgres_db)):
+    """
+        Generate and serve LLM monitoring report as an HTML page directly in the browser.
+        Uses the same data pipeline as /evidently/generate-report but returns rendered HTML.
+        
+            Args:
+                days: Number of days of data to include (default: 365)
+    """
+    try:
+        # Check database availability
+        count_result = await db.execute(
+            text("SELECT COUNT(*) FROM analytics.llm_interactions")
+        )
+        count = count_result.scalar()
+
+        if count == 0:
+            return HTMLResponse(content="""
+                <html><body style="font-family:Arial;margin:40px;background:#f5f5f5;">
+                    <div style="max-width:600px;margin:0 auto;background:white;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)">
+                        <h1 style="color:#e74c3c">⚠️ No Data Available</h1>
+                        <p>No LLM interaction records found in <code>analytics.llm_interactions</code>.</p>
+                        <p>Start using the <code>/llm/chat</code> endpoint to populate data.</p>
+                    </div>
+                </body></html>
+            """, status_code=200)
+
+        # Fetch data from postgresql database
+        query = text(f"""
+            SELECT
+                created_at      AS timestamp,
+                user_id,
+                session_id,
+                prompt,
+                response,
+                response_time_ms,
+                tokens_used,
+                cost
+            FROM analytics.llm_interactions
+            WHERE created_at >= NOW() - INTERVAL '{days} DAY'
+            ORDER BY created_at DESC
+        """)
+
+        result = await db.execute(query)
+        rows = result.fetchall()
+
+        if not rows or len(rows) < 2:
+            return HTMLResponse(content=f"""
+                <html><body style="font-family:Arial;margin:40px;background:#f5f5f5;">
+                    <div style="max-width:600px;margin:0 auto;background:white;padding:30px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)">
+                        <h1 style="color:#e67e22">⚠️ Not Enough Data</h1>
+                        <p>Need at least 2 records to generate a report. Found: <strong>{len(rows) if rows else 0}</strong></p>
+                    </div>
+                </body></html>
+            """, status_code=200)
+
+        # Build Dataframe
+        data = []
+        for row in rows:
+            prompt_text = row[3] or ""
+            response_text = row[4] or ""
+
+            data.append({
+                "timestamp":       row[0],
+                "user_id":         str(row[1]) if row[1] else "unknown",
+                "session_id":      str(row[2]) if row[2] else "unknown",
+                "response_time_ms": float(row[5]) if row[5] else 0.0,
+                "tokens_used":     int(row[6])   if row[6] else 0,
+                "cost":            float(row[7]) if row[7] else 0.0,
+                "prompt_length":   len(prompt_text.split()),
+                "response_length": len(response_text.split()),
+            })
+
+        df = pd.DataFrame(data)
+        numeric_cols = ["response_time_ms", "tokens_used", "cost", "prompt_length", "response_length"]
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+        # Split reference
+        split_idx = max(1, len(df) // 2)
+        drop_cols = ["timestamp", "user_id", "session_id"]
+        reference_df = df.iloc[:split_idx].drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore')
+        current_df = df.iloc[split_idx:].drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore')
+
+        # Generate HTML using llm_monitor helper
+        html_content = llm_monitor._generate_evidently_html(df, reference_df, current_df)
+        logger.info(f"✅ /evidently/reports/UI served {len(df)} records ({days}d window)")
+        
+        return HTMLResponse(content=html_content, status_code=200)
+
+    except Exception as e:
+        logger.error(f"❌ /evidently/reports/UI failed: {e}")
+        return HTMLResponse(content=f"""
+            <html><body style="font-family:Arial;margin:40px;">
+                <h1 style="color:#e74c3c">❌ Report Generation Failed</h1>
+                <pre style="background:#f8f8f8;padding:15px;border-radius:5px">{str(e)}</pre>
+            </body></html>
+        """, status_code=500)

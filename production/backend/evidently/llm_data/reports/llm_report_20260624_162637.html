@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>LLM Monitoring Report</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th,
+        td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background: #4CAF50;
+            color: white;
+        }
+
+        tr:hover {
+            background: #f9f9f9;
+        }
+
+        .badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>📊 LLM Monitoring Report</h1>
+        <p>Generated: 2026-06-24 16:26:37 &nbsp;|&nbsp; Total records: 35</p>
+        <h2>📈 Reference vs Current Comparison</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Reference (17 records)</th>
+                    <th>Current (18 records)</th>
+                    <th>Drift</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Avg Response Time (ms)</td>
+                    <td>522.88</td>
+                    <td>399.72</td>
+                    <td><span style='color:orange'>↓ 23.6%</span></td>
+                </tr>
+                <tr>
+                    <td>Avg Tokens Used</td>
+                    <td>54.76</td>
+                    <td>47.33</td>
+                    <td><span style='color:orange'>↓ 13.6%</span></td>
+                </tr>
+                <tr>
+                    <td>Avg Prompt Length</td>
+                    <td>14.65</td>
+                    <td>12.06</td>
+                    <td><span style='color:orange'>↓ 17.7%</span></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</body>
+
+</html>

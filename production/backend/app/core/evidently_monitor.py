@@ -83,14 +83,14 @@ class EvidentlyMonitor:
         try:
             query = text("""
                 SELECT
-                    COUNT(*) as total_interactions,
-                    AVG(response_time_ms) as avg_response_time_ms,
-                    MAX(response_time_ms) as max_response_time_ms,
-                    SUM(tokens_used) as total_tokens,
-                    SUM(cost) as total_cost,
-                    AVG(cost) as avg_cost_per_interaction,
-                    COUNT(DISTINCT user_id) as unique_users,
-                    COUNT(DISTINCT session_id) as unique_sessions
+                    COUNT(*) AS total_interactions,
+                    AVG(response_time_ms) AS avg_response_time_ms,
+                    MAX(response_time_ms) AS max_response_time_ms,
+                    SUM(tokens_used) AS total_tokens,
+                    SUM(cost) AS total_cost,
+                    AVG(cost) AS avg_cost_per_interaction,
+                    COUNT(DISTINCT user_id) AS unique_users,
+                    COUNT(DISTINCT session_id) AS unique_sessions
                 FROM analytics.llm_interactions
                 WHERE created_at >= NOW() - INTERVAL '24 hours'
             """)

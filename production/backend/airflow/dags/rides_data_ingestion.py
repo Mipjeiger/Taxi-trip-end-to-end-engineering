@@ -159,6 +159,9 @@ def extract_parquet_data(**context):
 # ================================================================
 def transform_data(**context):
     """Transform and feature engineer taxi ride data"""
+    import builtins  # ← protect against 'hash' column shadowing builtin
+    _hash = builtins.hash
+    
     try:
         extracted_path = context["task_instance"].xcom_pull(
             task_ids="extract_parquet", key="extracted_path",
@@ -183,7 +186,7 @@ def transform_data(**context):
             k: v for k, v in COLUMN_RENAME_MAP.items() if k in df.columns
         })
 
-        # Handle ride_id
+        # ------ Handle ride_id ------ 
         if "ride_id" not in df.columns:
             for alt in ["id", "trip_id"]:
                 if alt in df.columns:
@@ -192,7 +195,7 @@ def transform_data(**context):
             else:
                 raise ValueError("No ride_id column found")
 
-        # Handle rider_id
+        # ------ Handle rider_id ------ 
         if "rider_id" not in df.columns:
             for alt in ["user_id", "passenger_id"]:
                 if alt in df.columns:
@@ -200,25 +203,67 @@ def transform_data(**context):
                     break
             else:
                 raise ValueError("No rider_id column found")
-
-        # Map driver_status based on booking_status
-        if "booking_status" in df.columns:
-            df["driver_status"] = df["booking_status"].apply(
-                lambda s: "Online" if str(s).strip() == "Completed" else "Offline"
-            )
-            online_count = (df["driver_status"] == "Online").sum()
-            offline_count = (df["driver_status"] == "Offline").sum()
-            logger.info(f"✅ Mapped driver_status: Online={online_count}, Offline={offline_count}")
-        else:
+            
+        # ------ Handle driver_status ------
+        if "driver_status" not in df.columns:
             df["driver_status"] = "Offline"
-            logger.warning("⚠️ booking_status not found, defaulting driver_status to 'Offline'")
+            logger.warning("⚠️ driver_status not found, defaulting to 'Offline'")
+        else:
+            online_count = (df["driver_status"].str.strip() == "Online").sum()
+            logger.info(f"✅ driver_status: {online_count} Online, {len(df) - online_count} Offline")
+        
+        # ------ Handle driver_id ------ 
+        def make_driver_id(row):
+            status = str(row.get("driver_status", "")).strip()
+            if status == "Online":
+                # Deterministic: same ride always gets same driver_id
+                ride_id = str(row.get("ride_id", ""))
+                return f"DRV-{abs(_hash(ride_id)) % 900000 + 100000}"
+            
+            return None
+        
+        df["driver_id"] = df.apply(make_driver_id, axis=1)
+        assigned = df["driver_id"].notna().sum()
+        logger.info(f"✅ Assigned driver_id to {assigned} rides based on driver_status")
 
-        # Map status column
+        # ------ booking_status + status ------
         if "booking_status" in df.columns:
             df["status"] = df["booking_status"]
         else:
             df["status"] = "Unknown"
             df["booking_status"] = "Unknown"
+            logger.warning("⚠️ booking_status not found, defaulting to 'Unknown'")
+
+        # Force NULL for statuses where no driver is expected
+        NO_DRIVER_STATUSES = [
+            "Cancelled by Customer",
+            "No Driver Found",
+            "Incomplete",
+        ]
+        if "booking_status" in df.columns:
+            no_driver_mask = df["booking_status"].isin(NO_DRIVER_STATUSES)
+            df.loc[no_driver_mask, "driver_id"] = None
+            logger.info(
+                f"ℹ️ Forced driver_id=NULL for {no_driver_mask.sum()} "
+                f"non-assigned status rides"
+            )
+
+        # ------ handle fares -------
+        if "actual_fare" not in df.columns and "price" in df.columns:
+            df["actual_fare"] = pd.to_numeric(df["price"], errors="coerce")
+        if "actual_fare" in df.columns:
+            df["actual_fare"] = pd.to_numeric(df["actual_fare"], errors="coerce")
+        if "estimated_fare" not in df.columns:
+            df["estimated_fare"] = df.get("actual_fare")
+
+        # ----- Coordinates -----
+        for src, dst in {
+            "pickup_lon": "pickup_lng",
+            "drop_lat": "dropoff_lat",
+            "drop_lon": "dropoff_lng"
+        }.items():
+            if src in df.columns and dst not in df.columns:
+                df[dst] = df[src]
 
         # Handle vehicle_arrival_at and completed_at - SIMPLIFIED
         # These columns may not exist in source data, so create them as NULL
@@ -227,42 +272,10 @@ def transform_data(**context):
         if "completed_at" not in df.columns:
             df["completed_at"] = None
 
-        # Handle fares
-        if "actual_fare" in df.columns:
-            df["actual_fare"] = pd.to_numeric(df["actual_fare"], errors="coerce")
-        elif "price" in df.columns:
-            df["actual_fare"] = pd.to_numeric(df["price"], errors="coerce")
-            logger.info("✅ Created actual_fare from price")
-
-        if "estimated_fare" in df.columns:
-            df["estimated_fare"] = pd.to_numeric(df["estimated_fare"], errors="coerce")
-        else:
-            estimated_fare_candidates = ["estimated_price", "fare_estimate", "predicted_fare"]
-            resolved = False
-            for candidate in estimated_fare_candidates:
-                if candidate in df.columns:
-                    df["estimated_fare"] = pd.to_numeric(df[candidate], errors="coerce")
-                    resolved = True
-                    break
-            if not resolved:
-                df["estimated_fare"] = None
-                logger.warning("⚠️ estimated_fare set to NULL")
-
-        # Coordinate columns
-        coord_map = {
-            "pickup_lon": "pickup_lng",
-            "drop_lat": "dropoff_lat",
-            "drop_lon": "dropoff_lng",
-        }
-        for src, dst in coord_map.items():
-            if src in df.columns and dst not in df.columns:
-                df[dst] = df[src]
-
-        # Validate required columns
-        required_columns = ["ride_id", "rider_id"]
-        missing = [c for c in required_columns if c not in df.columns]
+        # ---- Validate ------
+        missing = [c for c in ["ride_id", "rider_id"] if c not in df.columns]
         if missing:
-            raise ValueError(f"Required columns missing: {missing}")
+            raise ValueError(f"Required columns missing after transformation: {missing}")
 
         # Data cleaning
         before = len(df)
@@ -271,23 +284,22 @@ def transform_data(**context):
         logger.info(f"✅ Cleaned data: dropped {before - len(df)} records")
 
         # Log null summary
-        key_cols = ["ride_id", "rider_id", "booking_status", "driver_status",
-                    "status", "actual_fare", "distance_km", "day_of_week", 
-                    "demand_pressure", "hour", "vehicle_arrival_at", "completed_at"]
+        key_cols = ["ride_id", "rider_id", "driver_id", "driver_status",
+                    "booking_status", "actual_fare", "distance_km"]
         null_summary = {c: int(df[c].isna().sum()) for c in key_cols if c in df.columns}
-        logger.info(f"Null summary:\n{null_summary}")
+        logger.info(f"📊 Null summary:\n{null_summary}")
 
         # Save transformed data
         transformed_path = os.path.join(TEMP_DIR, f"transformed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet")
         df.to_parquet(transformed_path, index=False)
-
         context["task_instance"].xcom_push(key="transformed_path", value=transformed_path)
         logger.info(f"✅ Transformed data saved to {transformed_path} with {len(df)} records")
+
         return {"rows_transformed": len(df), "file_path": transformed_path}
 
     except Exception as e:
         logger.exception("❌ Failed transforming data")
-        raise e
+        raise
 
 # ================================================================
 # Task 3: Load models and implement Machine learinng models in vehicle_arrival_at, vtat_minutes, and ctat_minutes columns

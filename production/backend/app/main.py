@@ -248,7 +248,7 @@ app.include_router(driver.router, prefix="/api/drivers", tags=["Drivers"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(recommendations.router, prefix="/api/recommendations", tags=["Recommendations"])
 app.include_router(llm.router, prefix="/api/llm", tags=["LLM"])
-app.include_router(evidently.router, prefix="/api/evidently", tags=["Evidently"])
+app.include_router(evidently.router)
 
 # Health check endpoint
 @app.get("/health")

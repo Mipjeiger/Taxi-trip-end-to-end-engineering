@@ -43,3 +43,4 @@
 {"timestamp":"2026-06-20T16:54:56.349186","prompt_length":10,"response_length":78,"response_time_ms":1232.2325706481934,"tokens_used":496,"sentiment":"neutral","entity_count":12,"complexity_score":0.91}
 {"timestamp":"2026-06-22T10:17:12.980742","prompt_length":10,"response_length":21,"response_time_ms":753.9379596710205,"tokens_used":448,"sentiment":"neutral","entity_count":4,"complexity_score":0.238}
 {"timestamp":"2026-06-22T10:18:32.119374","prompt_length":10,"response_length":133,"response_time_ms":966.4523601531982,"tokens_used":565,"sentiment":"neutral","entity_count":24,"complexity_score":1.0}
+{"timestamp":"2026-06-23T15:25:14.698952","prompt_length":10,"response_length":25,"response_time_ms":712.3081684112549,"tokens_used":450,"sentiment":"neutral","entity_count":4,"complexity_score":0.28}

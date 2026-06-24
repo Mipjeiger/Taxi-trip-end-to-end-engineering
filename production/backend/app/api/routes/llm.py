@@ -11,6 +11,7 @@ import time
 import uuid
 import json
 import re
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -26,6 +27,8 @@ from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
 from app.services.trip_retriever import TripRetriever
 from app.models.trip import Trip
+from app.services.llm_audit import llm_monitor
+from app.core.evidently_monitor import evidently_monitor
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -563,3 +566,100 @@ async def debug_route(pickup: str, dropoff: str, db: AsyncSession = Depends(get_
         logger.error(f"Debug route error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
     
+# ===============================================================
+# Evidently Report Endpoints
+# ===============================================================
+
+@router.get("/evidently/reports")
+async def get_llm_reports():
+    """Get list of all generated Evidently reports from LLM interactions."""
+    try:
+        reports = llm_monitor.get_report_list()
+        return {
+            "reports": reports,
+            "count": len(reports),
+            "message": "Reports generated from LLM interactions"
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Failed to get Evidently reports: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving reports: {str(e)}")
+    
+@router.post("/evidently/generate-report")
+async def generate_llm_report(days: int = 7, db: AsyncSession = Depends(get_postgres_db)):
+    """
+    Generate Evidently report from LLM interactions in PostgreSQL
+
+    Args:
+        days: Number of days of data to analyze (default: 7)
+    """
+    try:
+        report_path = await llm_monitor.generate_report_from_db(db, days)
+
+        if report_path:
+            return {
+                "status": "success",
+                "report_path": report_path,
+                "days_analyzed": days,
+                "message": f"Report generated successfully for the last {days} days"
+            }
+        
+        else:
+            return {
+                "status": "warning",
+                "report_path": None,
+                "days_analyzed": days,
+                "message": f"Not enough data to generate report for the last {days} days"
+            }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to generate Evidently report: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
+    
+@router.get("/evidently/statistics")
+async def get_llm_statistics(db: AsyncSession = Depends(get_postgres_db)):
+    """Get aggregated LLM statistics from PostgreSQL for monitoring dashboard."""
+    try:
+        stats = await evidently_monitor.get_llm_metrics(db)
+
+        # Add additional stats from local files
+        local_stats = llm_monitor.get_statistics()
+
+        # Merge statistics
+        return {
+            "database": stats,
+            "local_files": local_stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Failed to get LLM statistics: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
+    
+@router.get("/evidently/health")
+async def evidently_health():
+    """Check Evidently monitoring health"""
+    try:
+        # Check if LLM interactions exist in the database
+        features_file = Path("/app/evidently/llm_data/features.jsonl")
+        prompts_file = Path("/app/evidently/llm_data/prompts.jsonl")
+        reports_dir = Path("/app/evidently/llm_data/reports")
+
+        return {
+            "status": "healthy",
+            "service": "Evidently LLM Monitor",
+            "timestamp": datetime.now().isoformat(),
+            "storage": {
+                "features_file_exists": features_file.exists(),
+                "prompts_file_exists": prompts_file.exists(),
+                "reports_dir_exists": reports_dir.exists(),
+                "reports_count": len(list(reports_dir.glob("*.html"))) if reports_dir.exists() else 0
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }

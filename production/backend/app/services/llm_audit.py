@@ -198,6 +198,87 @@ class LLMMonitor:
         except Exception as e:
             logger.error(f"❌ Failed to load LLM interactions from DB: {e}")
             return pd.DataFrame()
+        
+    async def generate_report_from_db(self, db: AsyncSession, days: int = 7) -> Optional[str]:
+        """Generate Evidently AI report from PostgreSQL database for LLM feature drift detection
+        
+        Args:
+            db: Database session
+            days: Number of days of data to analyze
+            
+        Returns:
+        Path to the generated HTML report
+        """
+        try:
+            # Get data from PostgreSQL database
+            query = text("""
+                SELECT
+                    created_at as timestamp,
+                    user_id,
+                    session_id,
+                    prompt,
+                    response,
+                    response_time_ms,
+                    tokens_used,
+                    cost
+                FROM analytics.llm_interactions
+                WHERE created_at >= NOW() - INTERVAL :days DAY
+                ORDER BY created_at DESC
+            """)
+
+            result = await db.execute(query, {"days": days})
+            rows = result.fetchall()
+
+            if not rows or len(rows) < 2:
+                logger.warning("⚠️ Not enough data to generate report")
+                return None
+            
+            # Convert to DataFrame
+            data = []
+            
+            for row in rows:
+                prompt_length = len(row[3].split()) if row[3] else 0
+                response_length = len(row[4].split()) if row[4] else 0
+                sentiment = self._analyze_sentiment(row[4]) if row[4] else "neutral"
+
+                data.append({
+                    "timestamp": row[0],
+                    "response_time_ms": row[5],
+                    "tokens_used": row[6],
+                    "cost": row[7],
+                    "prompt_length": prompt_length,
+                    "response_length": response_length,
+                    "sentiment": sentiment,
+                    "user_id": row[1],
+                    "session_id": row[2]
+                })
+
+            df = pd.DataFrame(data)
+
+            # Split into reference (first 50%) and current (last 50%)
+            split_idx = max(1, len(df) // 2)
+            reference_df = df.iloc[:split_idx].drop(columns=['timestamp', 'user_id', 'session_id', 'sentiment'], errors='ignore')
+            current_df = df.iloc[split_idx:].drop(columns=['timestamp', 'user_id', 'session_id', 'sentiment'], errors='ignore')
+
+            # Create Evidently report
+            report = Report(metrics=[DataSummaryPreset()])
+            report.run(
+                reference_data=reference_df,
+                current_data=current_df,
+                column_mapping=None
+            )
+
+            # Save report
+            report_path = self.reports_dir / f"llm_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            report.save_html(str(report_path))
+            
+            logger.info(f"✅ Generated LLM report at {report_path}")
+            return str(report_path)
+
+        except Exception as e:
+            logger.error(f"❌ Failed to generate LLM report from DB: {e}")
+            return None
+
     
     async def generate_report(self, db: AsyncSession) -> Optional[str]:
         """Generate Evidently AI report for LLM feature drift detection from database"""
@@ -231,7 +312,25 @@ class LLMMonitor:
         
         except Exception as e:
             logger.error(f"❌ Failed to generate LLM report: {e}")
-            return None       
+            return None
+        
+    def get_report_list(self) -> List[Dict[str, Any]]:
+        """Get list of all generated reports"""
+        try:
+            reports = []
+            for file in self.reports_dir.glob("*.html"):
+                reports.append({
+                    "name": file.name,
+                    "path": str(file),
+                    "size": file.stat().st_size,
+                    "modified": datetime.fromtimestamp(file.stat().st_mtime).isoformat()
+                })
+            reports.sort(key=lambda x: x["modified"], reverse=True)  # Sort by modified date descending
+            return reports
+        
+        except Exception as e:
+            logger.error(f"❌ Failed to get report list: {e}")
+            return []
         
     def get_statistics(self) -> Dict[str, Any]:
         """Get LLM Statistics"""

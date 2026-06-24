@@ -7,6 +7,7 @@ from qdrant_client.http import models
 from qdrant_client import QdrantClient
 from app.core.config import settings
 from qdrant_client.models import Distance, VectorParams
+import json
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -14,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 # Load environment variables
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = BASE_DIR.parent / '.env'
-logger.info(f"✅ Loaded environtment variables from: {ENV_PATH}")
+logger.info(f"✅ Loaded environment variables from: {ENV_PATH}")
 
 if not ENV_PATH.exists():
     ENV_PATH = BASE_DIR / '.env'
@@ -27,7 +28,7 @@ load_dotenv(dotenv_path=ENV_PATH)
 # ================================================================
 class QdrantVectorDB:
     """
-    Pure Qdrant client.
+    Pure Qdrant client for Qdrant Cloud.
 
     No embedding model
     No sentence transformer
@@ -39,30 +40,35 @@ class QdrantVectorDB:
     def __init__(self):
         self.client = None
         self.connected = False
+        self.collection_configs = {}  # Cache collection configs
         self._initialize_client()
 
     def _initialize_client(self):
-        """Initialize Qdrant client connection"""
+        """Initialize Qdrant client connection to Qdrant Cloud"""
         try:
-            # Use primary Qdrant cloud
-            if settings.QDRANT_URL and settings.QDRANT_URL.strip():                
+            # Use Qdrant Cloud
+            if settings.QDRANT_URL and settings.QDRANT_URL.strip():
+                # Remove trailing slashes
+                url = settings.QDRANT_URL.rstrip('/')
+                
+                logger.info(f"🔗 Connecting to Qdrant Cloud: {url}")
+                
                 self.client = QdrantClient(
-                    url=settings.QDRANT_URL,
+                    url=url,
                     api_key=settings.QDRANT_API_KEY,
-                    timeout=60
+                    timeout=60,
+                    prefer_grpc=False  # Use HTTP for cloud
                 )
             else:
-                logger.info("⚠️ Qdrant connection details not fully configured. Skipping Qdrant initialization.")
-                self.client = QdrantClient(
-                    host="localhost",
-                    port=6333,
-                    timeout=60
-                )
+                logger.warning("⚠️ QDRANT_URL not configured. Qdrant features disabled.")
+                self.connected = False
+                self.client = None
+                return
 
-            # Test connection without logging sensitive details data
+            # Test connection
             self.client.get_collections()
             self.connected = True
-            logger.info("✅ Successfully connected to Qdrant vector database.")
+            logger.info("✅ Successfully connected to Qdrant Cloud.")
 
         except Exception as e:
             logger.error(f"❌ Failed to initialize Qdrant client: {e}")
@@ -70,58 +76,57 @@ class QdrantVectorDB:
             self.client = None
 
     def create_collection(self, collection_name: str, vector_size: int = 384):
-        """Create a new collection for storing embeddings"""
+        """Create a new collection for storing embeddings with proper error handling"""
         try:
-            if not self.client:
+            if not self.client or not self.connected:
                 logger.error("❌ Qdrant client is not initialized. Cannot create collection.")
-                return
+                return False
 
             # Get existing collections
             collections = self.client.get_collections().collections
             existing_names = [col.name for col in collections]
 
             if collection_name in existing_names:
-
                 # Check vector size
                 collection_info = self.client.get_collection(collection_name)
                 existing_size = collection_info.config.params.vectors.size
+                
+                logger.info(f"📂 Collection '{collection_name}' exists with vector size: {existing_size}")
 
                 if existing_size != vector_size:
-                    logger.warning(f"⚠️ Collection '{collection_name}' already exists with different vector size ({existing_size}). Consider deleting and recreating if this is an issue.")
-                
-
+                    logger.warning(f"⚠️ Vector dimension mismatch: existing={existing_size}, required={vector_size}")
+                    logger.info(f"🗑️ Deleting and recreating collection '{collection_name}'...")
+                    
                     # Delete old collection
                     self.client.delete_collection(collection_name=collection_name)
-                    logger.info(f"🗑️ Deleted existing collection '{collection_name}' to create a new one.")
-
+                    logger.info(f"✅ Deleted collection '{collection_name}'")
+                    
                     # Create new collection
                     self.client.create_collection(
                         collection_name=collection_name,
                         vectors_config=models.VectorParams(
                             size=vector_size,
-                            distance=models.Distance.COSINE # Cosine similarity for semantic search
+                            distance=models.Distance.COSINE
                         )
                     )
+                    logger.info(f"✅ Created collection '{collection_name}' with size {vector_size}")
                 else:
-                    logger.debug(f"📂 Collection '{collection_name}' does not exist. Creating new collection.")
-
+                    logger.info(f"✅ Collection '{collection_name}' already exists with correct dimensions")
+                return True
             else:
-
                 # Create new collection
                 self.client.create_collection(
                     collection_name=collection_name,
                     vectors_config=VectorParams(
                         size=vector_size,
-                        distance=Distance.COSINE # Cosine similarity for semantic search
+                        distance=Distance.COSINE
                     )
                 )
-                logger.info(f"✅ Created collection '{collection_name}'")
-            
-            return True
+                logger.info(f"✅ Created collection '{collection_name}' with size {vector_size}")
+                return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to create Qdrant collections: {type(e).__name__}")
-            
+            logger.error(f"❌ Failed to create collection: {e}")
             return False
 
     def search_vector(
@@ -137,12 +142,15 @@ class QdrantVectorDB:
                 logger.error("❌ Qdrant client is not initialized. Cannot perform search.")
                 return []
 
+            # Ensure collection exists
+            self.create_collection(collection_name, len(query_vector))
+
             try:
                 results = self.client.search(
                     collection_name=collection_name,
                     query_vector=query_vector,
                     limit=limit,
-                    score_threshold=score_threshold # Minimum similarity score to consider
+                    score_threshold=score_threshold
                 )
             except AttributeError:
                 results = self.client.search(
@@ -161,7 +169,7 @@ class QdrantVectorDB:
             ]
                 
         except Exception as e:
-            logger.error(f"❌ Failed to search similar vectors in Qdrant: {type(e).__name__}")
+            logger.error(f"❌ Failed to search vectors in Qdrant: {e}")
             return []
         
     def add_point(
@@ -171,41 +179,60 @@ class QdrantVectorDB:
         vector: List[float],
         metadata: Dict[str, Any]
     ):
-        """Insert vector directly.
-
-        Vector comes from:
-        - Groq
-        - OpenAI
-        - VoyageAI
-        - Jina
-        - Ollama
-        - etc."""
+        """
+        Insert a vector point into Qdrant Cloud.
+        """
         try:
-
-            if not self.client:
+            if not self.client or not self.connected:
                 logger.error("❌ Qdrant client is not initialized. Cannot add point.")
                 return False
             
-            # Ensure collection exists
-            self.create_collection(collection_name=collection_name, vector_size=len(vector))
-            logger.info(f"✅ Adding point '{point_id}' to collection '{collection_name}' with metadata keys: {list(metadata.keys())}")
+            # Validate vector
+            if not vector or len(vector) == 0:
+                logger.error("❌ Empty vector provided")
+                return False
             
+            vector_size = len(vector)
+            logger.info(f"📊 Adding point with vector size: {vector_size}")
+            
+            # Ensure collection exists with correct dimensions
+            collection_created = self.create_collection(
+                collection_name=collection_name, 
+                vector_size=vector_size
+            )
+            
+            if not collection_created:
+                logger.error(f"❌ Failed to create/verify collection '{collection_name}'")
+                return False
+            
+            # Create point
             point = models.PointStruct(
                 id=str(point_id),
                 vector=vector,
                 payload=metadata
             )
 
+            # Upsert with wait
             self.client.upsert(
                 collection_name=collection_name,
                 points=[point],
-                wait=True # Wait for the operation to complete before returning
+                wait=True
             )
-            logger.debug(f"✅ Added point '{point_id}' to collection '{collection_name}' with metadata: {metadata}")
+            
+            logger.info(f"✅ Added point '{point_id}' to collection '{collection_name}'")
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to add point: {type(e).__name__}")
+            logger.error(f"❌ Failed to add point to Qdrant: {e}")
+            
+            # Try to get more details about the error
+            try:
+                # Check collection info
+                collection_info = self.client.get_collection(collection_name)
+                logger.info(f"📊 Collection info: size={collection_info.config.params.vectors.size}")
+            except Exception as coll_err:
+                logger.error(f"❌ Could not get collection info: {coll_err}")
+            
             return False
 
     def delete_collection(self, collection_name: str) -> bool:
@@ -220,7 +247,7 @@ class QdrantVectorDB:
             return True
             
         except Exception as e:
-            logger.error(f"❌ Failed to delete collection: {type(e).__name__}")
+            logger.error(f"❌ Failed to delete collection: {e}")
             return False
 
     def get_collection_info(self, collection_name: str) -> Optional[Dict]:
@@ -230,16 +257,53 @@ class QdrantVectorDB:
                 return None
             
             info = self.client.get_collection(collection_name)
+            
+            # Handle different qdrant-client versions
+            vectors_count = getattr(info, "vectors_count", None)
+            points_count = getattr(info, "points_count", None)
+
+            if vectors_count is None and hasattr(info, 'segments'):
+                vectors_count = sum(seg.vectors_count for seg in info.segments)
+                points_count = sum(seg.points_count for seg in info.segments)
+
+            # Get vector size
+            vector_size = None
+            if hasattr(info, "config") and hasattr(info.config, "params"):
+                if hasattr(info.config.params, "vectors"):
+                    vector_size = info.config.params.vectors.size
+
             return {
                 "name": collection_name,
-                "vectors_count": info.vectors_count,
-                "points_count": info.points_count,
-                "vector_size": info.config.params.vectors.size,
+                "vectors_count": vectors_count,
+                "points_count": points_count,
+                "vector_size": vector_size,
+                "status": "healthy"
             }
         
         except Exception as e:
-            logger.error(f"❌ Failed to get collection info: {type(e).__name__}")
+            logger.error(f"❌ Failed to get collection info: {e}")
             return None
+    
+    def health_check(self) -> Dict:
+        """Check Qdrant Cloud health and connection"""
+        try:
+            if not self.client or not self.connected:
+                return {"status": "disconnected", "connected": False}
+            
+            # Test connection
+            collections = self.client.get_collections()
+            return {
+                "status": "healthy",
+                "connected": True,
+                "collections": [c.name for c in collections.collections],
+                "url": settings.QDRANT_URL
+            }
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "connected": False,
+                "error": str(e)
+            }
 
 # Singleton instance for application-wide use
 qdrant_vector_db = QdrantVectorDB()

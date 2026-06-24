@@ -44,3 +44,5 @@
 {"timestamp":"2026-06-22T10:17:12.980742","prompt_length":10,"response_length":21,"response_time_ms":753.9379596710205,"tokens_used":448,"sentiment":"neutral","entity_count":4,"complexity_score":0.238}
 {"timestamp":"2026-06-22T10:18:32.119374","prompt_length":10,"response_length":133,"response_time_ms":966.4523601531982,"tokens_used":565,"sentiment":"neutral","entity_count":24,"complexity_score":1.0}
 {"timestamp":"2026-06-23T15:25:14.698952","prompt_length":10,"response_length":25,"response_time_ms":712.3081684112549,"tokens_used":450,"sentiment":"neutral","entity_count":4,"complexity_score":0.28}
+{"timestamp":"2026-06-24T01:28:32.682740","prompt_length":11,"response_length":20,"response_time_ms":816.7970180511475,"tokens_used":444,"sentiment":"neutral","entity_count":2,"complexity_score":0.23}
+{"timestamp":"2026-06-24T01:50:40.971734","prompt_length":11,"response_length":16,"response_time_ms":778.2280445098877,"tokens_used":444,"sentiment":"neutral","entity_count":5,"complexity_score":0.196}

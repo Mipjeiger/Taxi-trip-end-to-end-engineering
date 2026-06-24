@@ -8,6 +8,7 @@ from sqlalchemy import text
 from app.core.redis_client import get_redis
 from datetime import datetime
 from app.services.redis_service import CACHE_VERSION
+from app.core.qdrant_client import qdrant_vector_db
 
 router = APIRouter(prefix="/health", tags=["Health"])
 logger = logging.getLogger(__name__)
@@ -16,6 +17,11 @@ logger = logging.getLogger(__name__)
 async def health_redis():
     """Check Redis health and cache integrity"""
     return await redis_service.health_check()
+
+@router.get("/qdrant")
+async def qdrant_health():
+    """Check Qdrant Cloud health"""
+    return qdrant_vector_db.health_check()
 
 @router.get("/cache/validate/{pickup}/{dropoff}")
 async def validate_cache(

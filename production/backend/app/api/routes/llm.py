@@ -586,12 +586,12 @@ async def get_llm_reports():
         raise HTTPException(status_code=500, detail=f"Error retrieving reports: {str(e)}")
     
 @router.post("/evidently/generate-report")
-async def generate_llm_report(days: int = 7, db: AsyncSession = Depends(get_postgres_db)):
+async def generate_llm_report(days: int = 365, db: AsyncSession = Depends(get_postgres_db)):
     """
     Generate Evidently report from LLM interactions in PostgreSQL
 
     Args:
-        days: Number of days of data to analyze (default: 7)
+        days: Number of days of data to analyze (default: 365)
     """
     try:
         report_path = await llm_monitor.generate_report_from_db(db, days)
@@ -605,12 +605,24 @@ async def generate_llm_report(days: int = 7, db: AsyncSession = Depends(get_post
             }
         
         else:
-            return {
-                "status": "warning",
-                "report_path": None,
-                "days_analyzed": days,
-                "message": f"Not enough data to generate report for the last {days} days"
-            }
+
+            # Check if there's data but insufficient
+            count_query = text("SELECT COUNT(*) FROM analytics.llm_interactions")
+            result = await db.execute(count_query)
+            count = result.scalar()
+
+            if count > 0:
+                return {
+                    "status": "warning",
+                    "message": f"Found {count} records but need at least 2 for report generation.",
+                    "total_records": count
+                }
+            
+            else:
+                return {
+                    "status": "warning",
+                    "message": "No LLM interaction data found in the database. Cannot generate report.",
+                }
         
     except Exception as e:
         logger.error(f"❌ Failed to generate Evidently report: {e}")

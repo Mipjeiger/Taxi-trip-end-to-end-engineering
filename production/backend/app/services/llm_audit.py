@@ -154,7 +154,7 @@ class LLMMonitor:
             Path to the generated HTML report
         """
         try:
-            # FIX: Use string interpolation for days instead of parameter
+            
             query = text(f"""
                 SELECT 
                     created_at as timestamp,
@@ -172,6 +172,8 @@ class LLMMonitor:
             
             result = await db.execute(query)
             rows = result.fetchall()
+
+            logger.info(f"📊 Retrieved {len(rows) if rows else 0} LLM interaction records from DB for the last {days} days")
             
             if not rows or len(rows) < 2:
                 logger.warning(f"⚠️ Not enough data to generate report (need at least 2 records, have {len(rows) if rows else 0})")
@@ -197,6 +199,7 @@ class LLMMonitor:
                 })
             
             df = pd.DataFrame(data)
+            logger.info(f"📊 Prepared DataFrame with {len(df)} records for Evidently report generation")
             
             # Split into reference (first 50%) and current (last 50%)
             split_idx = max(1, len(df) // 2)

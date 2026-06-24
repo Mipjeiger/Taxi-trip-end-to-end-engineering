@@ -116,14 +116,12 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
                     FROM analytics.trip
                     WHERE pickup_location IS NOT NULL
                     AND status = 'Completed'
-                    LIMIT 100
                 """)
                 dropoff_query = text("""
                     SELECT DISTINCT dropoff_location
                     FROM analytics.trip
                     WHERE dropoff_location IS NOT NULL
                     AND status = 'Completed'
-                    LIMIT 100
                 """)
 
                 pickup_result = await db.execute(pickup_query)
@@ -145,12 +143,20 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
         cleaned_message = user_message.lower()
 
         # Remove common question words and phrases
-        common_prefixes = [
+        common_prefixes_english = [
             'what is', 'what\'s', 'how to', 'how do i', 'tell me', 'i want', 
             'show me', 'find', 'get', 'need', 'looking for', 'fastest', 'best',
-            'cheapest', 'quickest', 'route', 'way', 'trip', 'travel', 'go'
+            'cheapest', 'quickest', 'route', 'way', 'trip', 'travel', 'go',
+            'how long', 'how much', 'when', 'using', 'to go', 'going to'
         ]
-        for prefix in common_prefixes:
+
+        common_prefixes_indonesian = [
+            'berapa', 'bagaimana', 'dari', 'ke', 'menuju', 'pergi ke', 'apakah', 'apakah ada', 'berapa lama', 'berapa biaya', 
+            'kapan', 'menggunakan', 'untuk pergi', 'pergi ke', 'tunjukkan', 'cari', 'butuh', 'ingin', 'rute', 
+            'jalan', 'perjalanan', 'naik', 'kendaraan', 'mobil', 'berapa lama','berapa biaya', 'kapan', 'menggunakan', 'untuk pergi', 'pergi ke'
+        ]
+        
+        for prefix in common_prefixes_english + common_prefixes_indonesian:
             cleaned_message = re.sub(rf'^{prefix}\s+', '', cleaned_message, flags=re.IGNORECASE)
 
         cleaned_message = re.sub(r'\s+in\s+jakarta$', '', cleaned_message, flags=re.IGNORECASE)
@@ -167,6 +173,7 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
             for loc in known_locations:
                 if loc and loc in text_lower:
                     pos = text_lower.find(loc)
+                    
                     # Prefer matches that are earlier in the text and longer
                     if pos < best_position or (pos == best_position and len(loc) > best_length):
                         best_position = pos
@@ -175,21 +182,33 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
 
             return best_match
 
-        # Strategy 2: Use regex patterns from "X to Y"
-        patterns = [r'(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)',
-                    r'([^?\.]+?)\s+(?:to|ke)\s+([^?\.]+)',
-                    r'(?:between|antara)\s+([^a]+?)\s+(?:and|dan)\s+([^?\.]+)'
+        # Strategy 1: Use regex patterns from "X to Y"
+        patterns = [
+            r'(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)',
+            r'([^?\.]+?)\s+(?:to|ke)\s+([^?\.]+)',
+            r'(?:between|antara)\s+([^a]+?)\s+(?:and|dan)\s+([^?\.]+)',
+            r'(?:go|going|want)\s+(?:to)?\s*([^f]+?)\s+(?:from|dari)\s+([^?\.]+)',
+            r'to\s+([^f]+?)\s+from\s+([^?\.]+)',
         ]
         
         for pattern in patterns:
             match = re.search(pattern, cleaned_message, re.IGNORECASE)
 
             if match:
-                potential_pickup = match.group(1).strip()
-                potential_dropoff = match.group(2).strip()
+                if 'from' in pattern or 'dari' in pattern:
+                    if match.groups() and len(match.groups()) == 2:
+                        potential_pickup = match.group(2).strip() if 'to' in pattern else match.group(1).strip()
+                        potential_dropoff = match.group(1).strip() if 'to' in pattern else match.group(2).strip()
+                    else:
+                        potential_pickup = match.group(1).strip()
+                        potential_dropoff = match.group(2).strip()
+
+                else:
+                    potential_pickup = match.group(1).strip()
+                    potential_dropoff = match.group(2).strip()
 
                 # Clean potential locations
-                for common in ['from', 'dari', 'to', 'ke', 'the', 'a', 'an']:
+                for common in ['from', 'dari', 'to', 'ke', 'the', 'a', 'an', 'go', 'going']:
                     potential_pickup = re.sub(rf'^{common}\s+', '', potential_pickup, flags=re.IGNORECASE)
                     potential_dropoff = re.sub(rf'^{common}\s+', '', potential_dropoff, flags=re.IGNORECASE)
 
@@ -209,9 +228,18 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
                     if dropoff_match:
                         dropoff = dropoff_match
                         break
+
+                elif dropoff_match:
+                    dropoff = dropoff_match
+                    remaining = cleaned_message.replace(potential_dropoff, '')
+                    pickup_match = find_location_in_text(remaining, known_pickups)
+
+                    if pickup_match:
+                        pickup = pickup_match
+                        break
             
 
-        # Strategy 3: if still not found, try to find any two known locations
+        # Strategy 2: if still not found, try to find any two known locations
         if not pickup or not dropoff:
             # Find all known locations in the text
             found_locations = []
@@ -229,7 +257,7 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
                 pickup = found_locations[0][1]
                 dropoff = found_locations[1][1]
 
-        # Strategy 4: Last resort - use simple patern matching
+        # Strategy 3: Last resort - use simple patern matching
         if not pickup or not dropoff:
             simple_pattern = r'(?:from|dari)\s+([^t]+?)\s+(?:to|ke)\s+([^?\.]+)'
             simple_match = re.search(simple_pattern, cleaned_message, re.IGNORECASE)
@@ -238,30 +266,29 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
                 dropoff = simple_match.group(2).strip()
 
                 # Clean up
-                for common in ['from', 'dari', 'to', 'ke', 'the']:
+                for common in ['from', 'dari', 'to', 'ke', 'the', 'go', 'going']:
                     pickup = re.sub(rf'^{common}\s+', '', pickup, flags=re.IGNORECASE)
                     dropoff = re.sub(rf'^{common}\s+', '', dropoff, flags=re.IGNORECASE)
 
         # Final cleanup
         if pickup:
             # Remove extra words
-            pickup = re.sub(r'^(from|dari|at|near|in|the|fast|route|best)\s+', '', pickup, flags=re.IGNORECASE)
+            pickup = re.sub(r'^(from|dari|at|near|in|the|fast|route|best|go|going)\s+', '', pickup, flags=re.IGNORECASE)
             pickup = pickup.strip()
-            # Remove "in jakarta" suffix
             pickup = re.sub(r'\s+in\s+jakarta$', '', pickup, flags=re.IGNORECASE)
-            # Take first part if comma or period
             pickup = pickup.split(',')[0].strip()
             pickup = pickup.split('.')[0].strip()
-            # Limit length
-            if len(pickup) > 50:
+            
+            if len(pickup) > 50: # Limit length
                 pickup = pickup[:50]
 
         if dropoff:
-            dropoff = re.sub(r'^(to|ke|at|near|in|the|destination|fast|route|best)\s+', '', dropoff, flags=re.IGNORECASE)
+            dropoff = re.sub(r'^(to|ke|at|near|in|the|destination|fast|route|best|go|going)\s+', '', dropoff, flags=re.IGNORECASE)
             dropoff = dropoff.strip()
             dropoff = re.sub(r'\s+in\s+jakarta$', '', dropoff, flags=re.IGNORECASE)
             dropoff = dropoff.split(',')[0].strip()
             dropoff = dropoff.split('.')[0].strip()
+            
             if len(dropoff) > 50:
                 dropoff = dropoff[:50]
 
@@ -270,7 +297,6 @@ async def chat_endpoint(request: ChatRequest, db: AsyncSession = Depends(get_pos
             dropoff = None  # Reset dropoff if same as pickup
 
         logger.info(f"📍 Extracted locations: pickup='{pickup}', dropoff='{dropoff}'")
-
 
         # ============================================================
         # STEP 2: Test Database connection (handle both dict and bool)
@@ -594,6 +620,19 @@ async def generate_llm_report(days: int = 365, db: AsyncSession = Depends(get_po
         days: Number of days of data to analyze (default: 365)
     """
     try:
+        count_query = text("SELECT COUNT(*) FROM analytics.llm_interactions")
+        result = await db.execute(count_query)
+        count = result.scalar()
+
+        logger.info(f"📊 Total LLM interactions in DB: {count}")
+
+        if count == 0:
+            return {
+                "status": "warning",
+                "message": "No LLM interaction data found in the database. Cannot generate report.",
+                "total_records": 0
+            }
+
         report_path = await llm_monitor.generate_report_from_db(db, days)
 
         if report_path:
@@ -601,28 +640,17 @@ async def generate_llm_report(days: int = 365, db: AsyncSession = Depends(get_po
                 "status": "success",
                 "report_path": report_path,
                 "days_analyzed": days,
-                "message": f"Report generated successfully for the last {days} days"
+                "total_records": count,
+                "message": "Report generated successfully from LLM interactions"
             }
         
-        else:
-
-            # Check if there's data but insufficient
-            count_query = text("SELECT COUNT(*) FROM analytics.llm_interactions")
-            result = await db.execute(count_query)
-            count = result.scalar()
-
-            if count > 0:
-                return {
-                    "status": "warning",
-                    "message": f"Found {count} records but need at least 2 for report generation.",
-                    "total_records": count
-                }
-            
-            else:
-                return {
-                    "status": "warning",
-                    "message": "No LLM interaction data found in the database. Cannot generate report.",
-                }
+        else:         
+            return {
+                "status": "warning",
+                "message": f"📊 Found {count} records but need at least 2 for report generation.",
+                "total_records": count,
+                "required_records": 2
+            }
         
     except Exception as e:
         logger.error(f"❌ Failed to generate Evidently report: {e}")

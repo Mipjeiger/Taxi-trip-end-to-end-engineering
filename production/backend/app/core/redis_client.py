@@ -97,3 +97,4 @@ async def redis_health_check() -> bool:
         return True
     except:
         return False
+

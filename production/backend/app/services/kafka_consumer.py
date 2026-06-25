@@ -42,7 +42,7 @@ POSTGRES_DB = os.getenv("POSTGRES_DB")
 
 class EventConsumer:
     """
-    Kafka consumer: Frontend events -> DuckDB
+    Kafka consumer: Frontend events -> PostgresDB
     Batches events every 100 messages or 30 seconds, whichever comes first.
     """
 
@@ -108,7 +108,7 @@ class EventConsumer:
                     cur,
                     """
                     INSERT INTO analytics.taxi_trip_data_events
-                    (event_id, event_type, user_id, topic, event_data, event_timestamp)
+                    (event_id, event_type, user_id, topic, event_data, event_timestamp, created_at)
                     VALUES %s
                     ON CONFLICT (event_id) DO NOTHING
                     """,
@@ -119,7 +119,8 @@ class EventConsumer:
                             row.get("user_id"), # user_id
                             row.get("topic", "unknown"), # topic
                             json.dumps(row.get("event_data", {})), # event_data (JSON)
-                            row.get("event_timestamp", time.time()) # event_timestamp
+                            row.get("event_timestamp", time.time()), # event_timestamp
+                            time.time() # created_at
                         )
                         for row in batch
                     ],
@@ -190,7 +191,7 @@ class EventConsumer:
             logger.info("🛑 Kafka consumer stopped.")
 
     def _flush_batch(self, last_msg=None):
-        """Write batch to DuckDB and commit Kafka offsets"""
+        """Write batch to Postgres and commit Kafka offsets"""
         if not self._batch:
             return
         

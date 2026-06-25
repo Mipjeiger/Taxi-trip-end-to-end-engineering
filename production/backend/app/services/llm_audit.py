@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 try:
     from evidently import Report
+    from evidently.ui.workspace import Workspace
     from evidently.metrics import (
         ValueDrift,
         MeanValue,
@@ -68,7 +69,33 @@ class LLMMonitor:
         self.features_file = self.storage_path / "features.jsonl"
         self.reports_dir = self.storage_path / "reports"
         self.reports_dir.mkdir(exist_ok=True)
-        logger.info(f"📊 LLMMonitor initialized with storage path: {self.storage_path}")
+
+        self.workspace_path = self.storage_path / "workspace" # Define workspace path inside for evidently monitoring
+        self.ws = None
+        self.project = None
+
+        if EVIDENTLY_AVAILABLE:
+            try:
+                self.ws = Workspace.create(str(self.workspace_path))
+
+                # Find or create the monitoring project
+                for p in self.ws.list_projects():
+                    if p.name == "LLM Monitoring":
+                        self.project = p
+                        break
+
+                if not self.project:
+                    self.project = self.ws.create_project("LLM Monitoring")
+                    self.project.description = "Dashboard for LLM performance & data drift monitoring"
+                    self.project.save()
+                
+                logger.info(f"📊 LLMMonitor Workspace initialized at: {self.workspace_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to initialize Evidently workspace: {e}")
+
+        else:
+            logger.warning("⚠️ Evidently is not available; running in fallback simple report mode.")
+
 
     def log_prompt(self, prompt: LLMPrompt) -> None:
         """Log LLM prompt to storage"""
@@ -249,20 +276,30 @@ class LLMMonitor:
                 reference_data=reference_df,
                 current_data=current_df
             )
-            
-            # Save report — evidently 0.7.21 stores no accessible results post-run
-            # Build HTML directly from DataFrame stats
+
             timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
             report_path = self.reports_dir / f"llm_report_{timestamp_str}.html"
 
+            # Save visual fallback HTML report
             try:
                 html_content = self._generate_evidently_html(df, reference_df, current_df)
                 with open(report_path, 'w', encoding='utf-8') as f:
                     f.write(html_content)
-                logger.info(f"✅ Saved evidently report as HTML at {report_path}")
+                logger.info(f"✅ Saved Evidently report as HTML at {report_path}")
+                
             except Exception as e:
-                logger.error(f"❌ Failed to save report: {e}")
-                return await self._generate_simple_report_from_db(db, days)
+                logger.error(f"❌ Failed to save html report: {e}")
+
+            # Save report to workspace dashboard
+            try:
+                if EVIDENTLY_AVAILABLE and self.ws and self.project:
+                    self.ws.add_report(self.project.id, report)
+                    logger.info("✅ Report successfully added to local Evidently Workspace")               
+                else:
+                    logger.warning("⚠️  Evidently workspace not available; skipping report save to dashboard")
+
+            except Exception as e:
+                logger.error(f"❌ Failed to save report to workspace: {e}")
 
             logger.info(f"✅ Generated LLM report at {report_path}")
             return str(report_path)

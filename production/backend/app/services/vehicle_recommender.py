@@ -5,7 +5,6 @@ import pandas as pd
 import json
 import logging
 from sqlalchemy import text
-from app.core.database import init_pg_db
 
 logger = logging.getLogger(__name__)
 
@@ -35,31 +34,29 @@ class VehicleRecommender:
             vehicle_types = json.loads(active_vehicles_data)
         else:
             # 3. Cache miss: Query Postgres database on the drivers table
-            vehicle_type = []
+            vehicle_types = []
             try:
-                async for db in init_pg_db():
+
+                from app.core.postgres_db import get_postgres_db
+                async for db in get_postgres_db():
                     query = text("""
                         SELECT DISTINCT vehicle_type
                         FROM analytics.drivers
                         WHERE status = 'online'
                     """)
-                    rows = await db.execute(query)
+                    result = await db.execute(query)
+                    rows = result.fetchall()
                     vehicle_types = [row[0] for row in rows if row[0] is not None]
 
                     if vehicle_types:
                         # Cache the results in Redis for 30 seconds
-                        await self.redis.get(active_vehicles_key, json.dumps(vehicle_types), ex=30)
+                        await self.redis.set(active_vehicles_key, json.dumps(vehicle_types), ex=30)
                         logger.info(f"✅ Cached {len(vehicle_types)} active vehicle types from PostgreSQL")
                         break
 
             except Exception as e:
-                logger.error(f"❌ Error fetching active drivers from Postgres: {e}")
-
-                # Fallback list of vehicle types
-                vehicle_types = ["HRV", "Innova", "Alphard", "Go Sedan", "Brio"]
-        
-        if not vehicle_types:
-            vehicle_types = ["HRV", "Innova", "Alphard", "Go Sedan", "Brio"] # Fallback if no drivers are online
+                logger.error(f"❌ Error fetching active drivers from Postgres: {e}") 
+                vehicle_types = ["HRV", "Innova", "Alphard", "Go Sedan", "Brio"] # Fallback list of vehicle types
 
         # 4. Generate dummy similarity scores for active vehicle types
         vehicle_embeddings = {vt: np.random.rand(128).astype(np.float32) for vt in vehicle_types}

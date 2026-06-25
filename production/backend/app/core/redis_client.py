@@ -42,6 +42,7 @@ async def redis_get(key: str) -> Optional[str]:
     try:
         redis_conn = await get_redis()
         return await redis_conn.get(key)
+        
     except Exception as e:
         logger.error(f"Redis GET error for key {key}: {e}")
         return None

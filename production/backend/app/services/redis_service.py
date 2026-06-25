@@ -207,10 +207,12 @@ class RedisService:
     @staticmethod
     async def get_location_encoding(location: str, loc_type: str = "pickup") -> Optional[int]:
         """Get cached location encoding with validation"""
+        
         key = CACHE_KEYS["LOCATION_ENCODING"].format(loc_type=loc_type, location=location.lower())
         data = await redis_get(key)
         
         if data:
+            
             try:
                 parsed = json.loads(data)
                 

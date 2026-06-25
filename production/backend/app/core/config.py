@@ -19,7 +19,12 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:4002", "http://localhost"]
 
     # Redis Configuration
-    REDIS_URL: str = "redis://localhost:6379"
+    try:
+        REDIS_URL: str = "redis://Redis:6379"
+        print(f"✅ Redis URL set to: {REDIS_URL}")
+    except ImportError:
+        REDIS_URL: str = "redis://localhost:6379"  # Fallback for local development
+        print(f"⚠️ Redis URL not found in environment, using fallback: {REDIS_URL}")
 
     # Kafka Configuration
     KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
@@ -104,5 +109,17 @@ settings = Settings()
 # Backward compatibility for code that imports DATABASE_URL directly
 DB_CONNECTION_STRING = settings.DATABASE_URL        # Supabase async
 POSTGRES_CONNECTION_STRING = settings.POSTGRES_URL  # Internal Docker async
-DATABASE_PATH = Path(settings.PARQUET_PATH)         # Parquet file path
-MODEL_PATH = Path(settings.MODEL_PATH)              # ML models path
+DATABASE_PATH = Path(settings.PARQUET_PATH)
+if not DATABASE_PATH.exists():
+    fallback_parquet = BASE_DIR / 'database' / 'taxi_trip_engineering_2.parquet'
+    if fallback_parquet.exists():
+        DATABASE_PATH = fallback_parquet
+    else:
+        print(f"⚠️ Parquet file not found at {DATABASE_PATH} or {fallback_parquet}")
+
+# Resolve the Model path safely
+MODEL_PATH = Path(settings.MODEL_PATH)
+if not MODEL_PATH.exists():
+    fallback_model = BASE_DIR / 'models'
+    if fallback_model.exists():
+        MODEL_PATH = fallback_model

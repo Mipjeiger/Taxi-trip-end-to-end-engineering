@@ -92,7 +92,7 @@ COLUMN_RENAME_MAP = {
     "booking_status": "booking_status",
     "ride_distance": "distance_km",
     "driver_ratings": "driver_rating",
-    "estimated_drop_time_minute": "duration_minutes",
+    "estimated_drop_time_minute": "duration_minutes", # estimation drop time minute from parquet data for duration_minutes
     "pickup_lon": "pickup_lng",
     "drop_lat": "dropoff_lat",
     "drop_lon": "dropoff_lng",

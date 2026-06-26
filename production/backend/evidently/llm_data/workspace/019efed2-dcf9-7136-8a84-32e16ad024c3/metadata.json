@@ -1,0 +1,7 @@
+{
+  "id": "019efed2-dcf9-7136-8a84-32e16ad024c3",
+  "name": "LLM Monitoring",
+  "description": "Dashboard for LLM performance & data drift monitoring",
+  "org_id": null,
+  "version": "2"
+}

@@ -1,4 +1,3 @@
-from ctypes import Union
 import pandas as pd
 import numpy as np
 import pickle
@@ -8,7 +7,6 @@ from datetime import datetime, timedelta
 from app.core.redis_client import redis_get, redis_set
 from app.core.postgres_db import get_postgres_db
 from sqlalchemy import text
-from app.services.model_loader import model_loader
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -110,49 +108,54 @@ class MLPredictor:
             return False
 
     async def predict_ride_metrics(
-            self, 
-            pickup: str, 
-            drop: str, 
-            vehicle_type: str,
-            hour: int, 
-            day_of_week: int, 
-            distance_km: float,
-            booking_datetime: Optional[datetime] = None,
-            demand_pressure: float = 1.0,
-            rating_avg: float = 4.5,
-            use_fallback: bool = False,
-            ride_id: Optional[str] = None
+        self, 
+        pickup: str, 
+        drop: str, 
+        vehicle_type: str,
+        hour: int, 
+        day_of_week: int, 
+        distance_km: float,
+        booking_datetime: Optional[datetime] = None,
+        demand_pressure: float = 1.0,
+        rating_avg: float = 4.5,
+        use_fallback: bool = False
     ) -> Dict:
         """ 
         Predict ride metrics (CTAT, VTAT, price, completion time).
         Returns:
-            Dict with predictions including estimated_completed_at"""
+            Dict with predictions including estimated_completed_at
+        """
         if not self.is_loaded:
             raise RuntimeError("Models not loaded. Call load_models() first.")
         
         if booking_datetime is None:
             booking_datetime = datetime.now()
-        
+
         try:
-            # Pre-compute time-based features before extracting model features
+            # Pre-compute time-based features
             is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
             is_night = 1 if hour >= 22 or hour < 5 else 0
 
-            # Extract and scale features
+            # Extract features - THIS RETURNS A DATAFRAME
             features_df = await self._extract_features(
-                pickup, drop, vehicle_type, hour, day_of_week, distance_km
+                pickup=pickup, 
+                drop=drop, 
+                vehicle_type=vehicle_type, 
+                hour=hour, 
+                day_of_week=day_of_week, 
+                distance_km=distance_km
             )
-
-            # Predict CTAT (Customer Time to Arrival), VTAT (Vehicle Time to Arrival), and calculate price
+            
+            # Predict CTAT and VTAT
             try:
                 ctat_pred = await self._predict_ctat(features_df, use_fallback)
                 vtat_pred = await self._predict_vtat(features_df, use_fallback)
             except Exception as e:
-                raise ValueError(f"VTAT prediction failed: {e}")
+                return ValueError(f"❌ Prediction failed: {e}")
             
             total_time = ctat_pred + vtat_pred
 
-            # Calculate price with database informed logic
+            # Calculate price
             try:
                 estimated_price = await self._calculate_price(
                     distance_km=distance_km,
@@ -164,47 +167,17 @@ class MLPredictor:
                     rating_avg=rating_avg
                 )
             except Exception as e:
-                raise ValueError(f"Price calculation failed: {e}")
+                return ValueError(f"❌ Price calculation failed: {e}")
 
-            # Predict completion timestamp with fallback logic
-            try:
-                completed_at = await self.predict_completed_at(booking_datetime, ctat_pred)
-                if completed_at is None:
-                    completed_at = booking_datetime + timedelta(minutes=ctat_pred)
-
-            except Exception as e:
-                logger.error(f"❌ Comppleted at prediction failed: {e}, using fallback.")
-                completed_at = booking_datetime + timedelta(minutes=ctat_pred)
-
-            try:
-                vehicle_arrival_at = await self.predict_vehicle_arrival(booking_datetime, vtat_pred)
-                if vehicle_arrival_at is None:
-                    vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_pred)
-
-            except Exception as e:
-                logger.error(f"❌ Vehicle arrival prediction failed: {e}, using fallback.")
-                vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_pred)
-
-            try:
-                vehicle_arrival_status = await self._calculate_vehicle_arrival_status(vtat_pred)
-            except Exception as e:
-                logger.error(f"❌ Vehicle arrival status calculation failed: {e}, using fallback.")
-                vehicle_arrival_status = "coming"
-
-            try:
-                customer_arrival_status = await self._calculate_customer_arrival_status(ctat_pred, distance_km=distance_km)
-            except Exception as e:
-                logger.error(f"❌ Customer arrival status calculation failed: {e}, using fallback.")
-                customer_arrival_status = "on_the_way"
-
-            # Ensture all timestamps are datetime objects
-            if completed_at is None:
-                completed_at = booking_datetime + timedelta(minutes=ctat_pred)
-
-            if vehicle_arrival_at is None:
-                vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_pred)
+            # Predict timestamps
+            completed_at = booking_datetime + timedelta(minutes=ctat_pred)
+            vehicle_arrival_at = booking_datetime + timedelta(minutes=vtat_pred)
             
-            # Return prediction into dictionary format
+            # Predict vehicle and customer arrival statuses
+            vehicle_arrival_status = await self._calculate_vehicle_arrival_status(vtat_pred)
+            customer_arrival_status = await self._calculate_customer_arrival_status(ctat_pred, distance_km=distance_km)
+            
+            # Return prediction dictionary
             return {
                 "pickup_location": pickup,
                 "drop_location": drop,
@@ -229,87 +202,167 @@ class MLPredictor:
             }
         
         except Exception as e:
-            logger.error(f"❌ Error during prediction: {str(e)}")
-            raise
+            raise RuntimeError(f"❌ Error in predict_ride_metrics: {e}")
 
     async def _extract_features(
             self,
-            db: AsyncSession,
+            pickup: str,
+            drop: str,
+            vehicle_type: str,
+            hour: int,
+            day_of_week: int,
+            distance_km: float
     ) -> pd.DataFrame:
         """Extract features matching training pipeline by ingest data from database on postgres"""
         try:
+            # Vehicle type encoding
+            VEHICLE_TYPE_ENCODING = {
+                'Alphard': 0, 'HRV': 1, 'Go Sedan': 2,
+                'Innova': 3, 'Premier Sedan': 4, 'Brio': 5, 'Terios': 6
+            }
+            vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 2)
+
             # Connect to PostgreSQL database to fetch data for feature extraction
             async for db in get_postgres_db():
-                query = await db.execute(
-                    text("""
-                        SELECT
-                            pickup_encoded, drop_encoded, vehicle_encoded, hour, day_of_week,
-                            route_cluster, distance_km, is_peak_hour, is_weekend, is_night,
-                            hour_sin, hour_cos, day_sin, day_cos
-                        FROM analytics.ml_predictor
-                        WHERE pickup_encoded IS NOT NULL AND drop_encoded IS NOT NULL                 
-                        """)
-                        )
-                result = await db.execute(query)
-                rows = result.fetchall()
+                query = text("""
+                    SELECT
+                        pickup_encoded, drop_encoded, vehicle_encoded, hour, day_of_week,
+                        route_cluster, distance_km, is_peak_hour, is_weekend, is_night,
+                        hour_sin, hour_cos, day_sin, day_cos
+                    FROM analytics.ml_predictor
+                    WHERE pickup_location = :pickup
+                        AND drop_location = :drop
+                        AND vehicle_encoded = :vehicle_type
+                    LIMIT 1        
+                """)
+                        
+                result = await db.execute(query, {
+                    "pickup": pickup,
+                    "drop": drop,
+                    "vehicle_type": vehicle_type
+                })
+                row = result.fetchone()
 
-                routes = [
-                    {
-                        "pickup_encoded": row[0],
-                        "drop_encoded": row[1],
-                        "vehicle_encoded": row[2],
-                        "hour": row[3],
-                        "day_of_week": row[4],
-                        "route_cluster": row[5],
-                        "distance_km": row[6],
-                        "is_peak_hour": row[7],
-                        "is_weekend": row[8],
-                        "is_night": row[9],
-                        "hour_sin": row[10],
-                        "hour_cos": row[11],
-                        "day_sin": row[12],
-                        "day_cos": row[13]
+                if row:
+                    # Found precomputed features in the database
+                    features = {
+                        'Pickup Encoded': row[0],
+                        'Drop Encoded': row[1],
+                        'Vehicle Type Encoded': row[2],
+                        'hour': row[3],
+                        'day_of_week': row[4],
+                        'route_cluster': row[5],
+                        'Ride Distance': row[6],
+                        'is_peak_hour': row[7],
+                        'is_weekend': row[8],
+                        'is_night': row[9],
+                        'hour_sin': row[10],
+                        'hour_cos': row[11],
+                        'day_sin': row[12],
+                        'day_cos': row[13]
                     }
-                    for row in rows
-                ]
-                return routes
+                    logger.info(f"✅ Extracted features from database for {pickup} -> {drop}")
+
+                    return pd.DataFrame([features])
+
+            # Fallback: Compute features from scratch
+            logger.info(f"⚠️ No precomputed features found for {pickup} -> {drop}. Computing features from scratch.")
+
+            # Get encodings from Redis cache or compute
+            from app.services.redis_service import RedisService
+            pickup_encoded = await RedisService.get_location_encoding(pickup, "pickup")
+            drop_encoded = await RedisService.get_location_encoding(drop, "drop")
+
+            if pickup_encoded is None:
+                pickup_encodeed = abs(hash(pickup)) % 1000
+            if drop_encoded is None:
+                drop_encoded = abs(hash(drop)) % 1000
+
+            route_cluster = abs(hash(f"{pickup}:{drop}")) % 100
+
+            # Time-based features
+            is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
+            is_weekend = 1 if day_of_week >= 5 else 0
+            is_night = 1 if hour >= 22 or hour < 5 else 0
             
-            # Insert to dataframe
-            features_df = pd.DataFrame(routes)
-            return features_df
+            hour_sin = np.sin(2 * np.pi * hour / 24)
+            hour_cos = np.cos(2 * np.pi * hour / 24)
+            day_sin = np.sin(2 * np.pi * day_of_week / 7)
+            day_cos = np.cos(2 * np.pi * day_of_week / 7)
             
+            features = {
+                'Pickup Encoded': pickup_encoded,
+                'Drop Encoded': drop_encoded,
+                'Vehicle Type Encoded': vehicle_encoded,
+                'hour': hour,
+                'day_of_week': day_of_week,
+                'route_cluster': route_cluster,
+                'Ride Distance': distance_km,
+                'is_peak_hour': is_peak_hour,
+                'is_weekend': is_weekend,
+                'is_night': is_night,
+                'hour_sin': hour_sin,
+                'hour_cos': hour_cos,
+                'day_sin': day_sin,
+                'day_cos': day_cos,
+            }
+
+            df = pd.DataFrame([features])
+
+            # Ensure all features from training exist in the DataFrame
+            if self.features:
+                for col in self.features:
+                    if col not in df.columns:
+                        df[col] = 0  # Add missing feature with default value
+                return df[self.features] 
+            
+            return df
+
         except Exception as e:
-            logger.error(f"❌ Error extracting features from database: {e}")
-            await db.rollback()
-            return False
-                
-        
+            logger.error(f"❌ Error extracting features: {e}")
+            
+            # Return default features
+            return pd.DataFrame([{
+                'Pickup Encoded': 0, 'Drop Encoded': 0, 'Vehicle Type Encoded': 2,
+                'hour': 12, 'day_of_week': 3, 'route_cluster': 0, 'Ride Distance': 10,
+                'is_peak_hour': 0, 'is_weekend': 0, 'is_night': 0,
+                'hour_sin': 0, 'hour_cos': 1, 'day_sin': 0, 'day_cos': 1
+            }])   
     
     async def _predict_ctat(self, features_df: pd.DataFrame, use_fallback: bool = False) -> float:
         """Predict CTAT using primary or fallback model."""
         try:
-            if not use_fallback and 'ctat_primary' in self.models:  
+            if not isinstance(features_df, pd.DataFrame):
+                features_df = pd.DataFrame([features_df])
+
+            if not use_fallback and 'ctat_primary' in self.models and self.scalers.get('ultra') is not None:  
+                
                 # Use ML model are trained
                 features_scaled = self.scalers['ultra'].transform(features_df)
                 ctat = float(self.models['ctat_primary'].predict(features_scaled)[0])
-            elif 'ctat_fallback' in self.models:
+
+            elif 'ctat_fallback' in self.models and self.scalers.get('minmax') is not None:
+
                 # Use fallback NN model
                 features_scaled = self.scalers['minmax'].transform(features_df)
                 ctat = float(self.models['ctat_fallback'].predict(features_scaled, verbose=0)[0])
+
             else:
-                logger.warning("⚠️ No CTAT model available for prediction.")
-                ctat = 20.0  # Default fallback value
+                raise RuntimeError("❌ No CTAT model available for prediction.")
 
             return max(ctat, 5.0) # Ensure minimum CTAT of 5 minutes
         
         except Exception as e:
             logger.error(f"❌ CTAT prediction error: {e}")
-            return 20.0
-        
+            raise RuntimeError("❌ CTAT prediction failed.")
+
     async def _predict_vtat(self, features_df: pd.DataFrame, use_fallback: bool = False) -> float:
         """Predict VTAT using primary or fallback model."""
         try:
-            if not use_fallback and 'vtat_primary' in self.models:
+            if not isinstance(features_df, pd.DataFrame):
+                features_df = pd.DataFrame([features_df])
+
+            if not use_fallback and 'vtat_primary' in self.models and self.scalers.get('ultra') is not None:
                 # Use ML model are trained
                 features_scaled = self.scalers['ultra'].transform(features_df)
                 
@@ -317,23 +370,21 @@ class MLPredictor:
                     vtat = float(self.models['vtat_primary'].predict(features_scaled)[0])
                 except TypeError as e:
                     if "force_all_finite" in str(e):
-                        # Retry without forece_all_finite parameter
                         vtat = float(self.models['vtat_primary'].predict(features_scaled, force_all_finite=False)[0])
                     else:
                         raise e
                     
-            elif 'vtat_fallback' in self.models:
+            elif 'vtat_fallback' in self.models and self.scalers.get('minmax') is not None:
                 features_scaled = self.scalers['minmax'].transform(features_df)
                 vtat = float(self.models['vtat_fallback'].predict(features_scaled, verbose=0)[0])
             else:
-                logger.warning("⚠️ No VTAT model available for prediction.")
-                vtat = 10.0  # Default fallback value
+                raise RuntimeError("❌ No VTAT model available for prediction.")
 
             return max(vtat, 2.0) # Ensure minimum VTAT of 2 minutes
         
         except Exception as e:
             logger.error(f"❌ VTAT prediction error: {e}")
-            return 10.0
+            raise RuntimeError("❌ VTAT prediction failed.")
 
     async def _calculate_price(
             self, 
@@ -345,24 +396,24 @@ class MLPredictor:
             demand_pressure: float = 1.0,
             rating_avg: float = 4.5
     ) -> float:
-        """Calculate price based on real-time factors and historical databae averages.
+        """Calculate price based on real-time factors and historical database averages.
         """
         try:
             # 1. Fetch dynamic base price per km from PostgreSQL database
             dynamic_price_per_km = None
             try:
-                from app.core.database import init_pg_db
+                from app.core.postgres_db import get_postgres_db
                 from sqlalchemy import text
 
-                async for db in init_pg_db():
+                async for db in get_postgres_db():
                     result = await db.execute(
                         text("""
                             SELECT
-                            AVG(estimated_fare)
+                                AVG(estimated_fare)
                             FROM analytics.trip
                             WHERE ride_type = :vehicle_type
-                            AND estimated_fare > 0
-                            AND estimated_fare IS NOT NULL
+                                AND estimated_fare > 0
+                                AND estimated_fare IS NOT NULL
                         """),
                         {"vehicle_type": vehicle_type}
                     )

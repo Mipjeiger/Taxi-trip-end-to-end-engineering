@@ -109,7 +109,7 @@ def populate_drivers(**context):
             percentage = float(row[3])
 
             # Scaling data with MATH BASED
-            threshold = 0.3 # 30% of trips for a rating is considered major
+            threshold = 7.2 # Try to increase threshold for more drivers retrieval
             num_drivers = float(percentage * threshold) # Scale number of drivers based on percentage of trips for that rating
             num_drivers = max(num_drivers, 1)
             

@@ -435,3 +435,16 @@ WHERE ride_id IS NOT NULL
 	AND ride_type = 'Alphard'
 GROUP BY pickup_location, dropoff_location, ride_type, hour, day_of_week, distance_km
 ORDER BY trip_count DESC;
+
+-- Data analyst: Find average of duration and distance by location
+SELECT pickup_location, dropoff_location,
+	AVG(duration_minutes) AS avg_duration_minute,
+	AVG(distance_km) AS avg_distance,
+	AVG(actual_fare) AS avg_price,
+	AVG(estimated_fare) AS avg_estimated_price,
+	COUNT(*) AS trip_count
+FROM analytics.trip
+WHERE status = 'Completed'
+	AND pickup_location IS NOT NULL
+	AND dropoff_location IS NOT NULL
+GROUP BY pickup_location, dropoff_location;

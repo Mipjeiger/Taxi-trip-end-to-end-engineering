@@ -36,11 +36,9 @@ class PredictionRequest(BaseModel):
         pattern="^(HRV|Innova|Alphard|Go Sedan|Premier Sedan|Brio|Terios)$",
         description="One of: HRV, Innova, Alphard, Go Sedan, Premier Sedan, Brio, Terios"
     )
-    hour: Optional[int] = Field(None, ge=0, le=23)
-    day_of_week: Optional[int] = Field(None, ge=0, le=6)
-    distance_km: Optional[float] = Field(10.0, gt=0)
-    demand_pressure: Optional[float] = Field(500.0, ge=170, le=777)
-    rating_avg: Optional[float] = Field(4.5, ge=3.8, le=5.0)
+    hour: int
+    day_of_week: int
+    distance_km: float
 
 class RidePredictionResponse(BaseModel):
     """Complete ride prediction with VTAT vehicle arrival data"""

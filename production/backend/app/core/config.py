@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     # These were module-level variables before — now proper Settings fields
     PARQUET_PATH: str = str(BASE_DIR / 'backend' / 'database' / 'taxi_trip_engineering_2.parquet')
     MODEL_PATH: str = str(BASE_DIR / 'backend' / 'models')
+    DATABASE_FEATURES_PATH: str = str(BASE_DIR / 'backend' / 'database' / 'taxi_trip_engineering_2_features.parquet')
+    DATABASE_SCALED_PATH: str = str(BASE_DIR / 'backend' / 'database' / 'taxi_trip_engineering_2_scaled.parquet')
 
     # --- Computed Properties ---
 
@@ -123,3 +125,20 @@ if not MODEL_PATH.exists():
     fallback_model = BASE_DIR / 'models'
     if fallback_model.exists():
         MODEL_PATH = fallback_model
+
+# Add database features and scaled for DATABASE
+DATABASE_FEATURES_PATH = (Path(settings.DATABASE_FEATURES_PATH))
+if not DATABASE_FEATURES_PATH.exists():
+    fallback_features = BASE_DIR / 'database' / 'taxi_trip_engineering_2_features.parquet'
+    if fallback_features.exists():
+        DATABASE_FEATURES_PATH = fallback_features
+    else:
+        print(f"⚠️ Features Parquet file not found at {DATABASE_FEATURES_PATH} or {fallback_features}")
+
+DATABASE_SCALED_PATH = (Path(settings.DATABASE_SCALED_PATH))
+if not DATABASE_SCALED_PATH.exists():
+    fallback_scaled = BASE_DIR / 'database' / 'taxi_trip_engineering_2_scaled.parquet'
+    if fallback_scaled.exists():
+        DATABASE_SCALED_PATH = fallback_scaled
+    else:
+        print(f"⚠️ Scaled Parquet file not found at {DATABASE_SCALED_PATH} or {fallback_scaled}")

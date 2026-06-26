@@ -39,6 +39,9 @@ class PredictionRequest(BaseModel):
     hour: int
     day_of_week: int
     distance_km: float
+    demand_pressure: float
+    rating_avg: float
+    use_fallback: Optional[bool] = False
 
 class RidePredictionResponse(BaseModel):
     """Complete ride prediction with VTAT vehicle arrival data"""

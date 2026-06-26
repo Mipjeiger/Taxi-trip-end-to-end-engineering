@@ -4,6 +4,7 @@ import pickle
 from typing import Dict, Optional, Union
 from pathlib import Path
 from datetime import datetime, timedelta
+from app.core.config import DATABASE_PATH
 from app.core.redis_client import redis_get, redis_set
 from app.core.postgres_db import get_postgres_db
 from sqlalchemy import text
@@ -213,7 +214,7 @@ class MLPredictor:
             day_of_week: int,
             distance_km: float
     ) -> pd.DataFrame:
-        """Extract features matching training pipeline by ingest data from database on postgres"""
+        """Extract features matching training pipeline by ingest data from database on parquet path"""
         try:
             # Vehicle type encoding
             VEHICLE_TYPE_ENCODING = {
@@ -222,49 +223,12 @@ class MLPredictor:
             }
             vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 2)
 
-            # Connect to PostgreSQL database to fetch data for feature extraction
-            async for db in get_postgres_db():
-                query = text("""
-                    SELECT
-                        pickup_encoded, drop_encoded, vehicle_encoded, hour, day_of_week,
-                        route_cluster, distance_km, is_peak_hour, is_weekend, is_night,
-                        hour_sin, hour_cos, day_sin, day_cos
-                    FROM analytics.ml_predictor
-                    WHERE pickup_location = :pickup
-                        AND drop_location = :drop
-                        AND vehicle_encoded = :vehicle_type
-                    LIMIT 1        
-                """)
-                        
-                result = await db.execute(query, {
-                    "pickup": pickup,
-                    "drop": drop,
-                    "vehicle_type": vehicle_type
-                })
-                row = result.fetchone()
-
-                if row:
-                    # Found precomputed features in the database
-                    features = {
-                        'Pickup Encoded': row[0],
-                        'Drop Encoded': row[1],
-                        'Vehicle Type Encoded': row[2],
-                        'hour': row[3],
-                        'day_of_week': row[4],
-                        'route_cluster': row[5],
-                        'Ride Distance': row[6],
-                        'is_peak_hour': row[7],
-                        'is_weekend': row[8],
-                        'is_night': row[9],
-                        'hour_sin': row[10],
-                        'hour_cos': row[11],
-                        'day_sin': row[12],
-                        'day_cos': row[13]
-                    }
-                    logger.info(f"✅ Extracted features from database for {pickup} -> {drop}")
-
-                    return pd.DataFrame([features])
-
+            # Integrate with Database to fetch precomputed features if available
+            df = pd.read_parquet(DATABASE_PATH)
+            if df is not None:
+                df.head(2)
+                return df
+        
             # Fallback: Compute features from scratch
             logger.info(f"⚠️ No precomputed features found for {pickup} -> {drop}. Computing features from scratch.")
 
@@ -274,7 +238,7 @@ class MLPredictor:
             drop_encoded = await RedisService.get_location_encoding(drop, "drop")
 
             if pickup_encoded is None:
-                pickup_encodeed = abs(hash(pickup)) % 1000
+                pickup_encoded = abs(hash(pickup)) % 1000
             if drop_encoded is None:
                 drop_encoded = abs(hash(drop)) % 1000
 
@@ -418,12 +382,14 @@ class MLPredictor:
                         {"vehicle_type": vehicle_type}
                     )
                     row = result.fetchone()
+
                     if row and row[0] is not None:
                         dynamic_price_per_km = float(row[0])
                         logger.info(f"📊 Computed dynamic base price from DB: {dynamic_price_per_km:.2f} IDR/km for {vehicle_type}")
-                        break # Exit database
 
-            except Exception as e:
+                        break
+
+            except:
                 logger.warning(f"⚠️ Could not compute dynamic price from DB, using fallback for {vehicle_type}: {e}")
 
             # 3. If DB value exists, use it directly (with minor real-time adjustments)
@@ -432,41 +398,32 @@ class MLPredictor:
                night_surge = 1.25 if is_night else 1.0
                final_price = dynamic_price_per_km * peak_surge * night_surge
             else:
+
                 # 3. Fallback: compute from scratch if DB is unavailable
-                vehicle_multiplier = {
-                    "Alphard": 0.85, "HRV": 1.0, "Go Sedan": 1.25,
-                    "Innova": 0.70, "Premier Sedan": 1.5, "Brio": 0.55, "Terios": 1.35
+                vehicle_base_price = {
+                "Alphard": 3500, "HRV": 2800, "Go Sedan": 2500,
+                "Innova": 3000, "Premier Sedan": 3200, "Brio": 2200, "Terios": 2700
                 }
+                base_price_per_km = vehicle_base_price.get(vehicle_type, 2800)
 
-                base_price_per_km = 2800
-                vehicle_mult = vehicle_multiplier.get(vehicle_type, 1.0)
-                distance_price = distance_km * base_price_per_km * vehicle_mult
-                time_price = time_min * 150
-                base_fare = 15000
-
-                demand_surge = 1.0 * ((demand_pressure - 250) / 500)
-                demand_surge = max(0.8, min(demand_surge, 1.8))
+                # Time-based surges
                 peak_surge = 1.35 if is_peak_hour else 1.0
                 night_surge = 1.25 if is_night else 1.0
-                rating_factor = 1.0 - ((5.0 - rating_avg) * 0.08)
-                rating_factor = max(0.9, min(rating_factor, 1.5))
-
-                final_price = (base_fare + distance_price + time_price) * \
-                    peak_surge * night_surge * demand_surge * rating_factor
+                
+                # Calculate fare
+                distance_price = distance_km * base_price_per_km
+                time_price = time_min * 150
+                base_fare = 15000
+                
+                final_price = (base_fare + distance_price + time_price) * peak_surge * night_surge
 
                 min_fare = 20000
-                max_fare = 1000000
+                max_fare = 800000
                 return max(min_fare, min(final_price, max_fare))
 
         except Exception as e:
             logger.error(f"❌ Price calculation error: {e}")
             return 50000
-            
-           
-        
-        except Exception as e:
-            logger.error(f"❌ Price calculation error: {e}")
-            return 50000  # Default fallback price
         
     async def _calculate_vehicle_arrival_status(self, vtat_minutes: float) -> str:
         """
@@ -481,16 +438,14 @@ class MLPredictor:
         try:
             vtat = float(vtat_minutes)
             if vtat < 5:
-                status = "arriving_soon"
+                return "arriving_soon"
             elif vtat < 15:
-                status = "arriving"
+                return "arriving"
             elif vtat < 30:
-                status = "coming"
+                return "coming"
             else:
-                status = "delayed"
+                return "delayed"
 
-            logger.info(f"Vehicle arrival status based on VTAT {vtat:.1f} min: {status}")
-            return status
         except Exception as e:
             logger.error(f"❌ Error calculating vehicle arrival status: {e}")
             return "coming"
@@ -502,15 +457,14 @@ class MLPredictor:
             booking_status: str = "Completed"
     ) -> Union[datetime, str]:
         """
-        Predict for completed_at using VTAT prediction.
+        Predict for completed_at using CTAT prediction.
         Formula: based on machine learning algorithm prediction
         """
+
         if booking_status != "Completed":
             return "No Trip"
         try:
-            completed_at = booking_datetime + timedelta(minutes=float(ctat_minutes))
-            logger.info(f"✅ Completed at dropoff: {completed_at}")
-            return completed_at
+            return booking_datetime + timedelta(minutes=float(ctat_minutes))
 
         except Exception as e:
             logger.error(f"❌ Error predicting completed at: {e}")
@@ -532,13 +486,12 @@ class MLPredictor:
         Returns:
             datetime: Predicted vehicle arrival timestamp
         """
+
         if booking_status != "Completed":
             return datetime(2026, 1, 1, 0, 0, 0)
 
         try:
-            vehicle_arrival_at = booking_datetime + timedelta(minutes=float(vtat_minutes))
-            logger.info(f"✅ Vehicle arrives at pickup: {vehicle_arrival_at}")
-            return vehicle_arrival_at
+            return booking_datetime + timedelta(minutes=float(vtat_minutes))
         
         except Exception as e:
             logger.error(f"❌ Error predicting vehicle arrival time: {e}")
@@ -558,11 +511,10 @@ class MLPredictor:
             
             # Import to avoid circular imports with database module
             from app.core.postgres_db import get_postgres_db
-            from app.core.database import init_pg_db
             from sqlalchemy import text
 
             # Connect table postgresql database
-            async for db in init_pg_db():
+            async for db in get_postgres_db():
                 result = await db.execute(
                     text("SELECT distance_km FROM analytics.trip WHERE ride_id = :ride_id"),
                     {"ride_id": ride_id}
@@ -576,19 +528,19 @@ class MLPredictor:
                 logger.debug(f"✅ Ride distance from database: {ride_id} = {distance} km")
                 return distance
             
+            return 0.0
+            
         except Exception as e:
             logger.error(f"❌ Error fetching ride distance for {ride_id}: {e}")
             return 0.0
 
-    async def _calculate_customer_arrival_status(self, 
-                                                 ctat_minutes: float, 
-                                                 ride_id: Optional[str] = None,
-                                                 distance_km: Optional[float] = None
-                                                 ) -> str:
-        """
-        FIX: ride_id is optional. If provided, fetch distance from analytics.trip (SQL database).
-        If not, use distance_km directly (for new ride predictions).
-        """
+    async def _calculate_customer_arrival_status(
+            self, 
+            ctat_minutes: float, 
+            ride_id: Optional[str] = None,
+            distance_km: Optional[float] = None
+    ) -> str:
+        """Calculate customer arrival status based on CTAT."""
         try:
             # Validate and convert CTAT to float
             ctat = float(ctat_minutes)
@@ -603,7 +555,6 @@ class MLPredictor:
 
             # If no valid distance, return unknown status
             if resolved_distance <= 0:
-                logger.warning("⚠️ No valid distance — returning 'unknown' status.")
                 return "unknown"
             
             # Status based on CTAT prediction thresholds
@@ -615,10 +566,7 @@ class MLPredictor:
                 return "near_dropoff"
             else:
                 return "late_arrival"
-        
-        except ValueError as e:
-            logger.error(f"❌ Invalid CTAT value: {ctat_minutes} - {e}")
-            return "unknown"
+    
         except Exception as e:
             logger.error(f"❌ Error calculating customer arrival status for ride {ride_id}: {e}")
             return "unknown"

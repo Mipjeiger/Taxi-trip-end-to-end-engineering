@@ -1,0 +1,232 @@
+{
+  "dashboard": {
+    "title": "ML Model Monitoring",
+    "description": "Monitor ML model performance, predictions, and health",
+    "tags": ["ml", "monitoring", "prometheus"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Prediction Success Rate",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "(sum(ml_predictions_total{status=\"success\"}) / sum(ml_predictions_total)) * 100",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 80},
+                {"color": "green", "value": 95}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Total Predictions",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(ml_predictions_total)",
+            "legendFormat": "Total"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Active Predictions",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(ml_active_predictions)",
+            "legendFormat": "Active"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Model Load Status",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "ml_model_load_status",
+            "legendFormat": "{{model_type}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "boolean",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Prediction Latency (P95)",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 4},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(ml_prediction_latency_seconds_bucket[5m])) by (le))",
+            "legendFormat": "P95 Latency"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Error Rate",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 4},
+        "targets": [
+          {
+            "expr": "sum(rate(ml_prediction_errors_total[5m])) / sum(rate(ml_predictions_total[5m])) * 100",
+            "legendFormat": "Error Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Predictions by Vehicle Type",
+        "type": "bargauge",
+        "gridPos": {"h": 6, "w": 6, "x": 0, "y": 10},
+        "targets": [
+          {
+            "expr": "sum(ml_predictions_total) by (vehicle_type)",
+            "legendFormat": "{{vehicle_type}}"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Error Distribution",
+        "type": "piechart",
+        "gridPos": {"h": 6, "w": 6, "x": 6, "y": 10},
+        "targets": [
+          {
+            "expr": "sum(ml_prediction_errors_total) by (error_type)",
+            "legendFormat": "{{error_type}}"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Model Performance (MAE)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 12, "y": 10},
+        "targets": [
+          {
+            "expr": "ml_model_performance{metric_name=\"mae\"}",
+            "legendFormat": "MAE"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "min"
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Model Performance (R²)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 4, "x": 16, "y": 10},
+        "targets": [
+          {
+            "expr": "ml_model_performance{metric_name=\"r2\"}",
+            "legendFormat": "R²"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "max": 1,
+            "min": 0
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "Cache Performance",
+        "type": "piechart",
+        "gridPos": {"h": 6, "w": 6, "x": 12, "y": 14},
+        "targets": [
+          {
+            "expr": "sum(ml_cache_hits_total) by (cache_type)",
+            "legendFormat": "{{cache_type}}"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "CTAT Distribution",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.5, sum(rate(ml_prediction_values_bucket{metric_type=\"ctat\"}[5m])) by (le))",
+            "legendFormat": "CTAT P50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(ml_prediction_values_bucket{metric_type=\"ctat\"}[5m])) by (le))",
+            "legendFormat": "CTAT P95"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "min"
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "Feature Extraction Time",
+        "type": "timeseries",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 16},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(ml_feature_extraction_seconds_bucket[5m])) by (le))",
+            "legendFormat": "P95"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      }
+    ],
+    "refresh": "30s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    }
+  }
+}

@@ -4,7 +4,7 @@ import pickle
 from typing import Dict, Optional, Union
 from pathlib import Path
 from datetime import datetime, timedelta
-from app.core.config import DATABASE_PATH
+from app.core.config import DATABASE_FEATURES_PATH
 from app.core.redis_client import redis_get, redis_set
 from app.core.postgres_db import get_postgres_db
 from sqlalchemy import text
@@ -151,9 +151,20 @@ class MLPredictor:
             try:
                 ctat_pred = await self._predict_ctat(features_df, use_fallback)
                 vtat_pred = await self._predict_vtat(features_df, use_fallback)
-            except Exception as e:
-                return ValueError(f"❌ Prediction failed: {e}")
+                
+                logger.info(f"📊 Model predictions - CTAT: {ctat_pred:.1f}min, VTAT: {vtat_pred:.1f}min")
             
+            except Exception as e:
+                logger.error(f"❌ ML model prediction failed: {e}")
+                
+                if 'route_ctat_mean' in features_df.columns and 'route_vtat_mean' in features_df.columns:
+                    ctat_pred = float(features_df['route_ctat_mean'].iloc[0])
+                    vtat_pred = float(features_df['route_vtat_mean'].iloc[0])
+                    
+                    logger.info(f"ℹ️ Using route averages: CTAT: {ctat_pred:.1f}min, VTAT: {vtat_pred:.1f}min")
+                else:
+                    raise RuntimeError("❌ ML model prediction failed and no fallback features available.")
+        
             total_time = ctat_pred + vtat_pred
 
             # Calculate price
@@ -168,7 +179,7 @@ class MLPredictor:
                     rating_avg=rating_avg
                 )
             except Exception as e:
-                return ValueError(f"❌ Price calculation failed: {e}")
+                raise RuntimeError(f"❌ Price calculation failed: {e}")
 
             # Predict timestamps
             completed_at = booking_datetime + timedelta(minutes=ctat_pred)
@@ -203,122 +214,268 @@ class MLPredictor:
             }
         
         except Exception as e:
+            logger.error(f"❌ Error during prediction: {str(e)}", exc_info=True)
             raise RuntimeError(f"❌ Error in predict_ride_metrics: {e}")
 
     async def _extract_features(
-            self,
-            pickup: str,
-            drop: str,
-            vehicle_type: str,
-            hour: int,
-            day_of_week: int,
-            distance_km: float
+        self,
+        pickup: str,
+        drop: str,
+        vehicle_type: str,
+        hour: int,
+        day_of_week: int,
+        distance_km: float
     ) -> pd.DataFrame:
-        """Extract features matching training pipeline by ingest data from database on parquet path"""
+        """
+        Extract features matching training pipeline by ingesting data from parquet file.
+        """
         try:
-            # Vehicle type encoding
-            VEHICLE_TYPE_ENCODING = {
-                'Alphard': 0, 'HRV': 1, 'Go Sedan': 2,
-                'Innova': 3, 'Premier Sedan': 4, 'Brio': 5, 'Terios': 6
+            # Load the parquet file
+            df = pd.read_parquet(DATABASE_FEATURES_PATH)
+            logger.info(f"📊 Loaded features parquet: {DATABASE_FEATURES_PATH} with {len(df)} rows and columns: {df.columns.tolist()[:5]}...")
+            
+            # ============================================================
+            # Vehicle Type Mapping & Encoding
+            # ============================================================
+            # Map parquet vehicle types to database vehicle types
+            VEHICLE_TYPE_MAPPING = {
+                'Auto': 'Brio',
+                'Car': 'Go Sedan',
+                'Go Sedan': 'Go Sedan',
+                'Motorcycle': 'Brio',
+                'Premier Sedan': 'Premier Sedan',
+                'eBike': 'Brio',
+                'Uber XL': 'Innova',
             }
-            vehicle_encoded = VEHICLE_TYPE_ENCODING.get(vehicle_type, 2)
+            
+            # Database vehicle type encoding
+            VEHICLE_TYPE_ENCODING = {
+                'Alphard': 0,
+                'HRV': 1,
+                'Go Sedan': 2,
+                'Innova': 3,
+                'Premier Sedan': 4,
+                'Brio': 5,
+                'Terios': 6,
+            }
+            
+            # Map the input vehicle_type (from parquet) to database vehicle type
+            mapped_vehicle_type = VEHICLE_TYPE_MAPPING.get(vehicle_type, 'Go Sedan')
+            vehicle_encoded = VEHICLE_TYPE_ENCODING.get(mapped_vehicle_type, 2)
+            
+            logger.info(f"📊 Vehicle type mapping: {vehicle_type} → {mapped_vehicle_type} (encoded: {vehicle_encoded})")
+            
+            # Try to find matching route in parquet
+            route_features = {}
+            for col in df.columns:
+                if col in self.features:
+                    route_features[col] = float(df[col].mean())
 
-            # Integrate with Database to fetch precomputed features if available
-            df = pd.read_parquet(DATABASE_PATH)
-            if df is not None:
-                df.head(2)
-                return df
+            logger.info(f"✅ Using averaged features from parquet (mean of {len(df)} rows)")
+
+            # ============================================================
+            # Build features dictionary
+            # ============================================================
+            features = {}
+            
+            # 1. Copy all route features from parquet
+            for key, value in route_features.items():
+                features[key] = value
+
+            # 2. Override with dynamic values
+            features['hour'] = hour
+            features['day_of_week'] = day_of_week
+            features['distance_km'] = distance_km
+            features['log_distance_v2'] = np.log(distance_km + 1)
+            features['dist_bin_ctat'] = min(distance_km / 10, 5)
+            features['dist_bin_vtat'] = min(distance_km / 10, 5)
+
+            # 3. Time-based features
+            features['is_peak_hour'] = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
+            features['is_weekend'] = 1 if day_of_week >= 5 else 0
+
+            # 4. Cylical encoding
+            features['hour_sin'] = np.sin(2 * np.pi * hour / 24)
+            features['hour_cos'] = np.cos(2 * np.pi * hour / 24)
+
+            # 5. Traffic score based on peak hour
+            features['traffic_score'] = 1 + features['is_peak_hour']
+
+            # 6. Price bucket (based on distance)
+            if distance_km < 5:
+                features['price_bucket_ctat'] = 0
+                features['price_bucket_vtat'] = 0
+            elif distance_km < 15:
+                features['price_bucket_ctat'] = 1
+                features['price_bucket_vtat'] = 1
+            else:
+                features['price_bucket_ctat'] = 2
+                features['price_bucket_vtat'] = 2
+
+            # 7. Rating bucket
+            features['rating_bucket_ctat'] = 0
+            features['rating_bucket_vtat'] = 0
+
+            # 8. Price per km - Adjust price per km amount of 3000 IDR/km for fallback
+            features['price_per_km'] = 3000
+            features['Booking Value'] = distance_km * 3000
+
+            # 9. Driver and Customer Ratings
+            features['Driver Ratings'] = 4.5
+            features['Customer Rating'] = 4.5
+            features['rating_sum'] = 9.0
+
+            # 10. Estimated times (use route averages or defaults)
+            features['estimated_pickup_time_minute'] = features.get('route_vtat_mean', 5.0)
+            features['estimated_drop_time_minute'] = features.get('route_ctat_mean', 15.0)
+
+            # 11. Vehicle type encoding (add to features)
+            features['Vehicle Type Encoded'] = vehicle_encoded
+
+            # 12. Route cluster (hash of pickup/dropoff coordinates)
+            features['route_cluster'] = abs(hash(f"{pickup}_{drop}")) % 100 
+
+            # 13. Pickup and Drop Encodings
+            features['Pickup Encoded'] = abs(hash(pickup)) % 1000
+            features['Drop Encoded'] = abs(hash(drop)) % 1000
+
+            # 14. Route hour features
+            features['route_hour_ctat'] = features.get('route_ctat_mean', 15.0) * (1 + 0.1 + features['is_peak_hour'])
+            features['route_hour_vtat'] = features.get('route_vtat_mean', 5.0) * (1 + 0.1 + features['is_peak_hour'])
+
+            # 15. Hourly averages
+            features['hour_avg_ctat'] = features.get('hour_avg_ctat', 15.0)
+            features['hour_avg_vtat'] = features.get('hour_avg_vtat', 5.0)
+            features['hour_demand'] = features.get('hour_demand', 10.0)
+
+            # 16. Day of week averages
+            features['dow_avg_ctat'] = features.get('dow_avg_ctat', 15.0)
+            features['dow_avg_vtat'] = features.get('dow_avg_vtat', 5.0)
+            
+            # 17. Route counts
+            features['route_count'] = features.get('route_count', 1)
+
+            # ============================================================
+            # Create Dataframe with all features
+            # ============================================================
+
+            features_df = pd.DataFrame([features])
+
+            # Ensure all features from training exist
+            if self.features:
+                for col in self.features:
+                    if col not in features_df.columns:
+                        features_df[col] = 0  # Fill missing features with default value
+                        logger.debug(f"⚠️ Missing feature '{col}' added with default value 0.0")
+
+                return features_df[self.features] # Return only the features used in training, in correct order
+            
+            return features_df
         
-            # Fallback: Compute features from scratch
-            logger.info(f"⚠️ No precomputed features found for {pickup} -> {drop}. Computing features from scratch.")
+        except Exception as e:
+            logger.error(f"❌ Error extracting features: {e}", exc_info=True)
 
-            # Get encodings from Redis cache or compute
-            from app.services.redis_service import RedisService
-            pickup_encoded = await RedisService.get_location_encoding(pickup, "pickup")
-            drop_encoded = await RedisService.get_location_encoding(drop, "drop")
-
-            if pickup_encoded is None:
-                pickup_encoded = abs(hash(pickup)) % 1000
-            if drop_encoded is None:
-                drop_encoded = abs(hash(drop)) % 1000
-
-            route_cluster = abs(hash(f"{pickup}:{drop}")) % 100
-
-            # Time-based features
-            is_peak_hour = 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0
-            is_weekend = 1 if day_of_week >= 5 else 0
-            is_night = 1 if hour >= 22 or hour < 5 else 0
-            
-            hour_sin = np.sin(2 * np.pi * hour / 24)
-            hour_cos = np.cos(2 * np.pi * hour / 24)
-            day_sin = np.sin(2 * np.pi * day_of_week / 7)
-            day_cos = np.cos(2 * np.pi * day_of_week / 7)
-            
-            features = {
-                'Pickup Encoded': pickup_encoded,
-                'Drop Encoded': drop_encoded,
-                'Vehicle Type Encoded': vehicle_encoded,
+            # Return default features using known columns
+            default_features = {
+                'route_ctat_mean': 15.0,
+                'route_ctat_median': 15.0,
+                'route_ctat_std': 5.0,
+                'route_vtat_mean': 5.0,
+                'route_vtat_median': 5.0,
+                'route_count': 1,
+                'hour_avg_ctat': 15.0,
+                'hour_avg_vtat': 5.0,
+                'hour_demand': 100,
+                'dow_avg_ctat': 15.0,
+                'dow_avg_vtat': 5.0,
+                'route_hour_ctat': 15.0,
+                'route_hour_vtat': 5.0,
+                'Ride Distance': distance_km,
+                'log_distance_v2': np.log(distance_km + 1),
+                'dist_bin_ctat': min(distance_km / 10, 5),
+                'dist_bin_vtat': min(distance_km / 10, 5),
+                'Driver Ratings': 4.5,
+                'Customer Rating': 4.5,
+                'rating_sum': 9.0,
+                'rating_bucket_ctat': 0,
+                'rating_bucket_vtat': 0,
+                'Booking Value': distance_km * 3000,
+                'price_per_km': 3000,
+                'price_bucket_ctat': 0,
+                'price_bucket_vtat': 0,
                 'hour': hour,
                 'day_of_week': day_of_week,
-                'route_cluster': route_cluster,
-                'Ride Distance': distance_km,
-                'is_peak_hour': is_peak_hour,
-                'is_weekend': is_weekend,
-                'is_night': is_night,
-                'hour_sin': hour_sin,
-                'hour_cos': hour_cos,
-                'day_sin': day_sin,
-                'day_cos': day_cos,
+                'hour_sin': np.sin(2 * np.pi * hour / 24),
+                'hour_cos': np.cos(2 * np.pi * hour / 24),
+                'is_peak_hour': 1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0,
+                'is_weekend': 1 if day_of_week >= 5 else 0,
+                'traffic_score': 1 + (1 if (7 <= hour <= 9) or (17 <= hour <= 19) else 0),
+                'estimated_pickup_time_minute': 5.0,
+                'estimated_drop_time_minute': 15.0,
+                'Vehicle Type Encoded': 2,
+                'route_cluster': abs(hash(f"{pickup}_{drop}")) % 100,
+                'Pickup Encoded': abs(hash(pickup)) % 1000,
+                'Drop Encoded': abs(hash(drop)) % 1000,
             }
 
-            df = pd.DataFrame([features])
-
-            # Ensure all features from training exist in the DataFrame
+            df = pd.DataFrame([default_features])
             if self.features:
                 for col in self.features:
                     if col not in df.columns:
-                        df[col] = 0  # Add missing feature with default value
-                return df[self.features] 
+                        df[col] = 0
+                return df[self.features]
             
             return df
 
-        except Exception as e:
-            logger.error(f"❌ Error extracting features: {e}")
-            
-            # Return default features
-            return pd.DataFrame([{
-                'Pickup Encoded': 0, 'Drop Encoded': 0, 'Vehicle Type Encoded': 2,
-                'hour': 12, 'day_of_week': 3, 'route_cluster': 0, 'Ride Distance': 10,
-                'is_peak_hour': 0, 'is_weekend': 0, 'is_night': 0,
-                'hour_sin': 0, 'hour_cos': 1, 'day_sin': 0, 'day_cos': 1
-            }])   
-    
     async def _predict_ctat(self, features_df: pd.DataFrame, use_fallback: bool = False) -> float:
         """Predict CTAT using primary or fallback model."""
         try:
             if not isinstance(features_df, pd.DataFrame):
                 features_df = pd.DataFrame([features_df])
-
-            if not use_fallback and 'ctat_primary' in self.models and self.scalers.get('ultra') is not None:  
-                
-                # Use ML model are trained
+            
+            # Ensure features are properly formatted
+            if self.features:
+                features_df = features_df[self.features]
+            
+            # Fill any NaN values
+            features_df = features_df.fillna(0)
+            
+            if not use_fallback and 'ctat_primary' in self.models and self.scalers.get('ultra') is not None:
                 features_scaled = self.scalers['ultra'].transform(features_df)
-                ctat = float(self.models['ctat_primary'].predict(features_scaled)[0])
-
+                try:
+                    ctat = float(self.models['ctat_primary'].predict(features_scaled)[0])
+                except TypeError as e:
+                    if "force_all_finite" in str(e):
+                        ctat = float(self.models['ctat_primary'].predict(features_scaled)[0])
+                    else:
+                        raise e
+                logger.info(f"✅ CTAT prediction from primary model: {ctat:.2f} min")
+                
             elif 'ctat_fallback' in self.models and self.scalers.get('minmax') is not None:
-
-                # Use fallback NN model
                 features_scaled = self.scalers['minmax'].transform(features_df)
                 ctat = float(self.models['ctat_fallback'].predict(features_scaled, verbose=0)[0])
-
+                logger.info(f"✅ CTAT prediction from fallback model: {ctat:.2f} min")
+                
             else:
-                raise RuntimeError("❌ No CTAT model available for prediction.")
+                logger.warning("⚠️ No CTAT model available, using route average")
+                if 'route_ctat_mean' in features_df.columns:
+                    ctat = float(features_df['route_ctat_mean'].iloc[0])
+                elif 'estimated_drop_time_minute' in features_df.columns:
+                    ctat = float(features_df['estimated_drop_time_minute'].iloc[0])
+                else:
+                    raise RuntimeError("❌ No CTAT model or feature available for prediction.")
+                
+                logger.info(f"ℹ️ Using fallback CTAT: {ctat:.2f} min")
 
-            return max(ctat, 5.0) # Ensure minimum CTAT of 5 minutes
+            return max(ctat, 5.0)  # Ensure minimum CTAT of 5 minutes
         
         except Exception as e:
             logger.error(f"❌ CTAT prediction error: {e}")
-            raise RuntimeError("❌ CTAT prediction failed.")
+            try:
+                if 'route_ctat_mean' in features_df.columns:
+                    return float(features_df['route_ctat_mean'].iloc[0])
+            except:
+                return RuntimeError("❌ CTAT prediction failed and no fallback feature available.")
 
     async def _predict_vtat(self, features_df: pd.DataFrame, use_fallback: bool = False) -> float:
         """Predict VTAT using primary or fallback model."""
@@ -326,29 +483,51 @@ class MLPredictor:
             if not isinstance(features_df, pd.DataFrame):
                 features_df = pd.DataFrame([features_df])
 
+            # Ensure features are properly formatted
+            if self.features:
+                features_df = features_df[self.features]
+
+            # Fill any NaN values
+            features_df = features_df.fillna(0)
+
             if not use_fallback and 'vtat_primary' in self.models and self.scalers.get('ultra') is not None:
-                # Use ML model are trained
-                features_scaled = self.scalers['ultra'].transform(features_df)
                 
+                # Use ML model are trained
+                features_scaled = self.scalers['ultra'].transform(features_df) # Scale features
                 try:
                     vtat = float(self.models['vtat_primary'].predict(features_scaled)[0])
                 except TypeError as e:
                     if "force_all_finite" in str(e):
-                        vtat = float(self.models['vtat_primary'].predict(features_scaled, force_all_finite=False)[0])
+                        vtat = float(self.models['vtat_primary'].predict(features_scaled[0]))
                     else:
                         raise e
+                logger.info(f"✅ VTAT prediction from primary model: {vtat:.2f} min")
                     
             elif 'vtat_fallback' in self.models and self.scalers.get('minmax') is not None:
+                
+                # Use fallback model
                 features_scaled = self.scalers['minmax'].transform(features_df)
                 vtat = float(self.models['vtat_fallback'].predict(features_scaled, verbose=0)[0])
+                logger.info(f"✅ VTAT prediction from fallback model: {vtat:.2f} min")
             else:
-                raise RuntimeError("❌ No VTAT model available for prediction.")
+                logger.warning("⚠️ No VTAT model available for prediction. Returning default VTAT of 5 minutes.")
+                # Try to get from features
+                if 'route_vtat_mean' in features_df.columns:
+                    vtat = float(features_df['route_vtat_mean'].iloc[0])
+                elif 'estimated_pickup_time_minute' in features_df.columns:
+                    vtat = float(features_df['estimated_pickup_time_minute'].iloc[0])
+                else:
+                    raise RuntimeError("❌ No VTAT model or feature available for prediction.")
 
             return max(vtat, 2.0) # Ensure minimum VTAT of 2 minutes
         
         except Exception as e:
             logger.error(f"❌ VTAT prediction error: {e}")
-            raise RuntimeError("❌ VTAT prediction failed.")
+            try:
+                if 'route_vtat_mean' in features_df.columns:
+                    return float(features_df['route_vtat_mean'].iloc[0])
+            except:
+                return RuntimeError("❌ VTAT prediction failed and no fallback feature available.")
 
     async def _calculate_price(
             self, 

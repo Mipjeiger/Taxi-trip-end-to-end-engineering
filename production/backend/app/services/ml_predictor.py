@@ -101,11 +101,35 @@ class MLPredictor:
             # Mark as loaded
             self.is_loaded = True
             logger.info("✅ All models and preprocessing objects loaded successfully.")
+
+            # ============================================================
+            # Update Prometheus metrics for model status
+            # ============================================================
+            from app.core.ml_metrics import set_model_loaded, set_model_info
+
+            set_model_loaded("ctat_model", bool(self.models.get('ctat_primary')))
+            set_model_loaded("vtat_model", bool(self.models.get('vtat_primary')))
+
+            # Set model info (metadata)
+            set_model_info("ctat_vtat", {
+                "version": "1.0.0",
+                "loaded": str(self.is_loaded),
+                "ctat_model": str(bool(self.models.get('ctat_primary'))),
+                "vtat_model": str(bool(self.models.get('vtat_primary'))),
+                "scaler": str(bool(self.scalers.get('ultra'))),
+                "features": str(len(self.features)) if self.features else 0
+            })
+
             return True
         
         except Exception as e:
             logger.error(f"❌ Error loading models: {e}")
             self.is_loaded = False
+
+            # Update metrics for failed load
+            from app.core.ml_metrics import set_model_loaded
+            set_model_loaded("ctat_model", False)
+            set_model_loaded("vtat_model", False)
             return False
 
     async def predict_ride_metrics(
@@ -150,21 +174,23 @@ class MLPredictor:
             # Predict CTAT and VTAT
             try:
                 ctat_pred = await self._predict_ctat(features_df, use_fallback)
-                vtat_pred = await self._predict_vtat(features_df, use_fallback)
+                logger.info(f"✅ CTAT prediction from primary model: {ctat_pred:.2f} min")
+            except Exception as e:
+                raise RuntimeError(f"❌ CTAT prediction failed: {e}")
                 
-                logger.info(f"📊 Model predictions - CTAT: {ctat_pred:.1f}min, VTAT: {vtat_pred:.1f}min")
+            try:
+                vtat_pred = await self._predict_vtat(features_df, use_fallback)
+                logger.info(f"✅ VTAT prediction from primary model: {vtat_pred:.2f} min")
             
             except Exception as e:
                 logger.error(f"❌ ML model prediction failed: {e}")
                 
-                if 'route_ctat_mean' in features_df.columns and 'route_vtat_mean' in features_df.columns:
-                    ctat_pred = float(features_df['route_ctat_mean'].iloc[0])
+                if 'route_vtat_mean' in features_df.columns:
                     vtat_pred = float(features_df['route_vtat_mean'].iloc[0])
-                    
-                    logger.info(f"ℹ️ Using route averages: CTAT: {ctat_pred:.1f}min, VTAT: {vtat_pred:.1f}min")
                 else:
-                    raise RuntimeError("❌ ML model prediction failed and no fallback features available.")
-        
+                    vtat_pred = ctat_pred * 0.3  # VTAT is typically 30% of CTAT
+                logger.info(f"ℹ️ Using fallback VTAT: {vtat_pred:.2f} min")
+            
             total_time = ctat_pred + vtat_pred
 
             # Calculate price
@@ -178,8 +204,14 @@ class MLPredictor:
                     demand_pressure=demand_pressure,
                     rating_avg=rating_avg
                 )
+
+                if estimated_price is None:
+                    estimated_price = distance_km * 3000  # Fallback price per km
+                    logger.warning(f"⚠️ Price calculation returned None. Using fallback price: {estimated_price} IDR")
+
             except Exception as e:
-                raise RuntimeError(f"❌ Price calculation failed: {e}")
+                logger.error(f"❌ Price calculation failed: {e}")
+                estimated_price = distance_km * 3000  # Fallback
 
             # Predict timestamps
             completed_at = booking_datetime + timedelta(minutes=ctat_pred)
@@ -200,7 +232,7 @@ class MLPredictor:
                 "estimated_drop_time_minute": round(ctat_pred, 2),
                 "total_ride_time_minute": round(total_time, 2),
                 "estimated_completed_at": completed_at.isoformat(),
-                "estimated_price_idr": round(estimated_price, 2),
+                "estimated_price_idr": round(estimated_price, 2) if estimated_price is not None else round(distance_km * 3000, 2),
                 "estimated_vehicle_arrival_at": vehicle_arrival_at.isoformat(),
                 "estimated_vehicle_arrival_minute": round(vtat_pred, 2),
                 "vehicle_arrival_status": vehicle_arrival_status,
@@ -215,7 +247,30 @@ class MLPredictor:
         
         except Exception as e:
             logger.error(f"❌ Error during prediction: {str(e)}", exc_info=True)
-            raise RuntimeError(f"❌ Error in predict_ride_metrics: {e}")
+            
+            # Return fallback prediction
+            return {
+                "pickup_location": pickup,
+                "drop_location": drop,
+                "vehicle_type": vehicle_type,
+                "distance_km": round(distance_km, 2),
+                "booking_datetime": booking_datetime.isoformat(),
+                "estimated_pickup_time_minute": 5.0,
+                "estimated_drop_time_minute": 15.0,
+                "total_ride_time_minute": 20.0,
+                "estimated_completed_at": (booking_datetime + timedelta(minutes=15)).isoformat(),
+                "estimated_price_idr": round(distance_km * 3000, 2),
+                "estimated_vehicle_arrival_at": (booking_datetime + timedelta(minutes=5)).isoformat(),
+                "estimated_vehicle_arrival_minute": 5.0,
+                "vehicle_arrival_status": "arriving",
+                "customer_arrival_status": "on_the_way",
+                "price_per_km": 3000,
+                "average_speed_kmh": distance_km / 0.25 if distance_km > 0 else 30,
+                "is_peak_hour": False,
+                "demand_pressure": 1.0,
+                "rating_avg": 4.5,
+                "model_confidence": "fallback"
+            }
 
     async def _extract_features(
         self,
@@ -482,127 +537,127 @@ class MLPredictor:
         try:
             if not isinstance(features_df, pd.DataFrame):
                 features_df = pd.DataFrame([features_df])
-
+            
             # Ensure features are properly formatted
             if self.features:
+                # Reorder columns to match training order
                 features_df = features_df[self.features]
-
+            
             # Fill any NaN values
             features_df = features_df.fillna(0)
-
+            
             if not use_fallback and 'vtat_primary' in self.models and self.scalers.get('ultra') is not None:
+                # Scale features
+                features_scaled = self.scalers['ultra'].transform(features_df)
                 
-                # Use ML model are trained
-                features_scaled = self.scalers['ultra'].transform(features_df) # Scale features
+                # Predict - remove force_all_finite parameter
                 try:
                     vtat = float(self.models['vtat_primary'].predict(features_scaled)[0])
+                    logger.info(f"✅ VTAT prediction from primary model: {vtat:.2f} min")
+
+                    return max(vtat, 2.0)
+                
                 except TypeError as e:
                     if "force_all_finite" in str(e):
-                        vtat = float(self.models['vtat_primary'].predict(features_scaled[0]))
+                        # Some sklearn versions don't accept force_all_finite - Try without the parameter (it's default True anyway)
+
+                        try:
+                            vtat = float(self.models['vtat_primary'].predict(features_scaled)[0])
+                            logger.info(f"✅ VTAT prediction from primary model (retry): {vtat:.2f} min")
+
+                            return max(vtat, 2.0)
+                        
+                        except Exception as e2:
+                            logger.error(f"❌ VTAT prediction retry failed: {e2}")
+                            # Fall through to fallback
                     else:
-                        raise e
-                logger.info(f"✅ VTAT prediction from primary model: {vtat:.2f} min")
-                    
-            elif 'vtat_fallback' in self.models and self.scalers.get('minmax') is not None:
+                        logger.error(f"❌ VTAT prediction TypeError: {e}")
+                        # Fall through to fallback
                 
-                # Use fallback model
-                features_scaled = self.scalers['minmax'].transform(features_df)
-                vtat = float(self.models['vtat_fallback'].predict(features_scaled, verbose=0)[0])
-                logger.info(f"✅ VTAT prediction from fallback model: {vtat:.2f} min")
-            else:
-                logger.warning("⚠️ No VTAT model available for prediction. Returning default VTAT of 5 minutes.")
-                # Try to get from features
+                # If we reach here, prediction failed - use fallback
+                logger.warning("⚠️ VTAT primary model failed, using fallback")
+                
+            elif 'vtat_fallback' in self.models and self.scalers.get('minmax') is not None:
+                try:
+                    features_scaled = self.scalers['minmax'].transform(features_df)
+                    vtat = float(self.models['vtat_fallback'].predict(features_scaled, verbose=0)[0])
+                    logger.info(f"✅ VTAT prediction from fallback model: {vtat:.2f} min")
+
+                    return max(vtat, 2.0)
+                
+                except Exception as e:
+                    logger.error(f"❌ VTAT fallback model failed: {e}")
+            
+            # If all models fail, use route average or default
+            logger.warning("⚠️ No VTAT model available, using route average")
+            try:
                 if 'route_vtat_mean' in features_df.columns:
                     vtat = float(features_df['route_vtat_mean'].iloc[0])
+                    logger.info(f"ℹ️ Using route average VTAT: {vtat:.2f} min")
+
                 elif 'estimated_pickup_time_minute' in features_df.columns:
                     vtat = float(features_df['estimated_pickup_time_minute'].iloc[0])
-                else:
-                    raise RuntimeError("❌ No VTAT model or feature available for prediction.")
+                    logger.info(f"ℹ️ Using estimated pickup time: {vtat:.2f} min")
 
-            return max(vtat, 2.0) # Ensure minimum VTAT of 2 minutes
+                else:
+                    # Use 30% of CTAT as fallback
+                    ctat = features_df.get('route_ctat_mean', 20.0)
+                    
+                    if hasattr(ctat, 'iloc'):
+                        ctat = ctat.iloc[0]
+
+                    vtat = float(ctat) * 0.3
+                    logger.info(f"ℹ️ Using 30% of CTAT as VTAT: {vtat:.2f} min")
+
+                return max(vtat, 2.0)
+            
+            except Exception as e:
+                logger.error(f"❌ VTAT fallback calculation failed: {e}")
+                return 10.0
         
         except Exception as e:
             logger.error(f"❌ VTAT prediction error: {e}")
-            try:
-                if 'route_vtat_mean' in features_df.columns:
-                    return float(features_df['route_vtat_mean'].iloc[0])
-            except:
-                return RuntimeError("❌ VTAT prediction failed and no fallback feature available.")
+            return 10.0
 
     async def _calculate_price(
-            self, 
-            distance_km: float, 
-            time_min: float, 
-            vehicle_type: str = "HRV",
-            is_peak_hour: int = 0,
-            is_night: int = 0,
-            demand_pressure: float = 1.0,
-            rating_avg: float = 4.5
+        self, 
+        distance_km: float, 
+        time_min: float, 
+        vehicle_type: str = "HRV",
+        is_peak_hour: int = 0,
+        is_night: int = 0,
+        demand_pressure: float = 1.0,
+        rating_avg: float = 4.5
     ) -> float:
-        """Calculate price based on real-time factors and historical database averages.
-        """
+        """Calculate price based on real-time factors and historical database averages."""
         try:
-            # 1. Fetch dynamic base price per km from PostgreSQL database
-            dynamic_price_per_km = None
-            try:
-                from app.core.postgres_db import get_postgres_db
-                from sqlalchemy import text
-
-                async for db in get_postgres_db():
-                    result = await db.execute(
-                        text("""
-                            SELECT
-                                AVG(estimated_fare)
-                            FROM analytics.trip
-                            WHERE ride_type = :vehicle_type
-                                AND estimated_fare > 0
-                                AND estimated_fare IS NOT NULL
-                        """),
-                        {"vehicle_type": vehicle_type}
-                    )
-                    row = result.fetchone()
-
-                    if row and row[0] is not None:
-                        dynamic_price_per_km = float(row[0])
-                        logger.info(f"📊 Computed dynamic base price from DB: {dynamic_price_per_km:.2f} IDR/km for {vehicle_type}")
-
-                        break
-
-            except:
-                logger.warning(f"⚠️ Could not compute dynamic price from DB, using fallback for {vehicle_type}: {e}")
-
-            # 3. If DB value exists, use it directly (with minor real-time adjustments)
-            if dynamic_price_per_km is not None:
-               peak_surge = 1.35 if is_peak_hour else 1.0
-               night_surge = 1.25 if is_night else 1.0
-               final_price = dynamic_price_per_km * peak_surge * night_surge
-            else:
-
-                # 3. Fallback: compute from scratch if DB is unavailable
-                vehicle_base_price = {
+            # Base price per km by vehicle type
+            vehicle_base_price = {
                 "Alphard": 3500, "HRV": 2800, "Go Sedan": 2500,
                 "Innova": 3000, "Premier Sedan": 3200, "Brio": 2200, "Terios": 2700
-                }
-                base_price_per_km = vehicle_base_price.get(vehicle_type, 2800)
-
-                # Time-based surges
-                peak_surge = 1.35 if is_peak_hour else 1.0
-                night_surge = 1.25 if is_night else 1.0
-                
-                # Calculate fare
-                distance_price = distance_km * base_price_per_km
-                time_price = time_min * 150
-                base_fare = 15000
-                
-                final_price = (base_fare + distance_price + time_price) * peak_surge * night_surge
-
-                min_fare = 20000
-                max_fare = 800000
-                return max(min_fare, min(final_price, max_fare))
+            }
+            base_price_per_km = vehicle_base_price.get(vehicle_type, 2800)
+            
+            # Time-based surges
+            peak_surge = 1.35 if is_peak_hour else 1.0
+            night_surge = 1.25 if is_night else 1.0
+            
+            # Calculate fare
+            distance_price = distance_km * base_price_per_km
+            time_price = time_min * 150
+            base_fare = 15000
+            
+            final_price = (base_fare + distance_price + time_price) * peak_surge * night_surge
+            
+            min_fare = 20000
+            max_fare = 1000000
+            final_price = max(min_fare, min(final_price, max_fare))
+            
+            return float(final_price)  # Ensure it's a float
 
         except Exception as e:
             logger.error(f"❌ Price calculation error: {e}")
-            return 50000
+            return float(distance_km * 3000)  # Return float fallback
         
     async def _calculate_vehicle_arrival_status(self, vtat_minutes: float) -> str:
         """

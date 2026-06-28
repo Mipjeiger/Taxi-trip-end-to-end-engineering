@@ -1,11 +1,14 @@
 from app.core.redis_client import redis_set_json, redis_get_json
 import logging
+import time
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 from app.services.ml_predictor import MLPredictor
 from app.api.dependencies import get_ml_predictor
 from app.models.prediction import PredictionRequest, RidePredictionResponse
 from app.services.redis_service import RedisService
+from app.services.ml_monitor import ml_monitor
+from app.core.ml_metrics import MLPredictionMetrics, record_cache_hit
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,45 +23,83 @@ async def predict_ride(request: PredictionRequest, ml_predictor: MLPredictor = D
     - vehicle_arrival_status: Status (arriving_soon/arriving/coming/delayed)
     - Full timing & pricing predictions
     """
-    try:
-        # Use current time if not specified in request
-        if request.hour is None:
-            request.hour = datetime.now().hour
-        if request.day_of_week is None:
-            request.day_of_week = datetime.now().weekday()
+    start_time = time.time()
+    model_type = "ctat_vtat"
+    vehicle_type = request.vehicle_type
 
-        booking_datetime = datetime.now()
+    # Use context manager for metrics
+    with MLPredictionMetrics(
+        model_type=model_type,
+        vehicle_type=vehicle_type,
+        endpoint="predict_ride"
+    ) as metrics:
 
-        # Unique cache key for exact paramaters
-        prediction_cache_key = f"cache:pred:{request.pickup_location}:{request.drop_location}:{request.vehicle_type}:{request.hour}"
+        try:
+            # Use current time if not specified in request
+            if request.hour is None:
+                request.hour = datetime.now().hour
+            if request.day_of_week is None:
+                request.day_of_week = datetime.now().weekday()
 
-        # 1. Prediction cache check (Target < 2ms response)
-        cached_prediction = await redis_get_json(prediction_cache_key)
-        if cached_prediction:
-            logger.info(f"🎯 Prediction cache hit: {prediction_cache_key}")
-            
-            return RidePredictionResponse(**cached_prediction)
+            booking_datetime = datetime.now()
 
-        # 3. Model Inference (Pass precomputed features into local model) -  Get ML predictions
-        prediction = await ml_predictor.predict_ride_metrics(
-            pickup=request.pickup_location,
-            drop=request.drop_location,
-            vehicle_type=request.vehicle_type,
-            hour=request.hour,
-            day_of_week=request.day_of_week,
-            distance_km=request.distance_km,
-            booking_datetime=booking_datetime,
-            demand_pressure=request.demand_pressure,
-            rating_avg=request.rating_avg
-        )
+            # Unique cache key for exact paramaters
+            prediction_cache_key = f"cache:pred:{request.pickup_location}:{request.drop_location}:{request.vehicle_type}:{request.hour}"
 
-        # 4. Cache prediction result
-        await redis_set_json(prediction_cache_key, prediction, expire=300)
-        return RidePredictionResponse(**prediction)
-    
-    except Exception as e:
-        logger.error(f"Prediction error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+            # 1. Prediction cache check (Target < 2ms response)
+            cached_prediction = await redis_get_json(prediction_cache_key)
+            if cached_prediction:
+                logger.info(f"🎯 Prediction cache hit: {prediction_cache_key}")
+                record_cache_hit() # Record cache hit metric
+
+                return RidePredictionResponse(**cached_prediction)
+
+            # 2. Model Inference (Pass precomputed features into local model) -  Get ML predictions
+            prediction = await ml_predictor.predict_ride_metrics(
+                pickup=request.pickup_location,
+                drop=request.drop_location,
+                vehicle_type=request.vehicle_type,
+                hour=request.hour,
+                day_of_week=request.day_of_week,
+                distance_km=request.distance_km,
+                booking_datetime=booking_datetime,
+                demand_pressure=request.demand_pressure,
+                rating_avg=request.rating_avg
+            )
+
+            # 3. Track successful prediction metrics
+            latency = time.time() - start_time
+            ml_monitor.track_prediction(
+                model_type=model_type,
+                vehicle_type=vehicle_type,
+                endpoint="predict_ride",
+                success=True,
+                latency=latency,
+                ctat_pred=prediction.get('estimated_drop_time_minute'),
+                vtat_pred=prediction.get('estimated_vehicle_arrival_minute'),
+                confidence=prediction.get('model_confidence')
+            )
+
+            # 4. Cache prediction result
+            await redis_set_json(prediction_cache_key, prediction, expire=300)
+            return RidePredictionResponse(**prediction)
+        
+        except Exception as e:
+
+            # Track failed prediction metrics
+            latency = time.time() - start_time
+            error_type = type(e).__name__
+            ml_monitor.track_prediction(
+                model_type=model_type,
+                vehicle_type=vehicle_type,
+                endpoint="predict_ride",
+                success=False,
+                error_type=error_type,
+                latency=latency
+            )
+
+            logger.error(f"Prediction error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
     
 @router.post("/compare_routes")
 async def compare_routes(

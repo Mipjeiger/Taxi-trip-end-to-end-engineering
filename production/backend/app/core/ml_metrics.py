@@ -144,26 +144,21 @@ def record_prediction_values(model_type: str, metric_type: str, value: float):
         metric_type=metric_type
     ).observe(value)
 
-
 def record_cache_hit(cache_type: str):
     """Record cache hit or miss"""
     ML_CACHE_HITS.labels(cache_type=cache_type).inc()
-
 
 def record_feature_extraction_time(duration: float):
     """Record feature extraction time"""
     ML_FEATURE_EXTRACTION_TIME.observe(duration)
 
-
 def set_model_loaded(model_type: str, is_loaded: bool):
     """Set model load status"""
     ML_MODEL_LOAD_STATUS.labels(model_type=model_type).set(1 if is_loaded else 0)
 
-
 def set_model_info(model_type: str, info: Dict[str, Any]):
     """Set model metadata"""
     ML_MODEL_INFO.labels(model_type=model_type).info(info)
-
 
 def set_model_performance(model_type: str, metric_name: str, value: float):
     """Set model performance metric"""

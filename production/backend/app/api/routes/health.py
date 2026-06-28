@@ -9,6 +9,8 @@ from app.core.redis_client import get_redis
 from datetime import datetime
 from app.services.redis_service import CACHE_VERSION
 from app.core.qdrant_client import qdrant_vector_db
+from app.services.ml_predictor import MLPredictor
+from app.api.dependencies import get_ml_predictor
 
 router = APIRouter(prefix="/health", tags=["Health"])
 logger = logging.getLogger(__name__)
@@ -105,3 +107,17 @@ async def cache_stats(db: AsyncSession = Depends(get_postgres_db)):
             "error": str(e),
             "status": "failed"
         }
+    
+@router.get("/ml")
+async def ml_health(ml_predictor: MLPredictor = Depends(get_ml_predictor)):
+    """
+    Check ML model health
+    """
+    return {
+        "status": "healthy" if ml_predictor.is_loaded else "unhealthy",
+        "models_loaded": ml_predictor.is_loaded,
+        "ctat_model": bool(ml_predictor.models.get('ctat_primary')),
+        "vtat_model": bool(ml_predictor.models.get('vtat_primary')),
+        "scaler_available": bool(ml_predictor.scalers.get('ultra')),
+        "features_count": len(ml_predictor.features) if ml_predictor.features else 0
+    }

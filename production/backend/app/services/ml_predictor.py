@@ -547,7 +547,7 @@ class MLPredictor:
             features_df = features_df.fillna(0)
             
             if not use_fallback and 'vtat_primary' in self.models and self.scalers.get('ultra') is not None:
-                # Scale features
+                # Scale features    
                 features_scaled = self.scalers['ultra'].transform(features_df)
                 
                 # Predict - remove force_all_finite parameter

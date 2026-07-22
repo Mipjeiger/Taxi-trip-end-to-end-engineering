@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     @property
     def POSTGRES_URL(self) -> str:
         """Asynchronous Connection string -> internal Docker PostgreSQL """
-        return (f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}")
+        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
     @property
     def POSTGRES_URL_SYNC(self) -> str:
